@@ -97,16 +97,16 @@ export default function SourceRow({
           href={source.feedUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="block truncate px-2 font-mono text-xs text-muted hover:text-accent"
+          className="flex min-h-11 min-w-0 items-center px-2 font-mono text-xs text-muted hover:text-accent"
         >
-          {source.feedUrl}
+          <span className="truncate">{source.feedUrl}</span>
         </a>
       </div>
 
       <div className="mt-2 min-w-0 px-2 font-mono text-xs md:mt-0">
         {failed ? (
           <details>
-            <summary className="cursor-pointer text-red-500">
+            <summary className="inline-flex min-h-11 cursor-pointer items-center text-red-500">
               error{when ? ` · ${when}` : ''}
             </summary>
             <p className="mt-1 break-words text-muted">{source.lastError}</p>
@@ -135,15 +135,20 @@ export default function SourceRow({
           onClick={() =>
             void run(() => updateSource(source.sourceId, { enabled: !source.enabled }))
           }
-          className={`relative h-6 w-11 shrink-0 cursor-pointer rounded-full border border-border transition-colors disabled:opacity-50 ${
-            source.enabled ? 'bg-accent' : 'bg-bg'
-          }`}
+          className="inline-flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center rounded-full disabled:opacity-50"
         >
           <span
-            className={`absolute top-0.5 left-0.5 size-4 rounded-full transition-transform ${
-              source.enabled ? 'translate-x-5 bg-bg' : 'bg-muted'
+            aria-hidden="true"
+            className={`relative block h-6 w-11 rounded-full border border-border transition-colors ${
+              source.enabled ? 'bg-accent' : 'bg-bg'
             }`}
-          />
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 size-4 rounded-full transition-transform ${
+                source.enabled ? 'translate-x-5 bg-bg' : 'bg-muted'
+              }`}
+            />
+          </span>
         </button>
 
         <button

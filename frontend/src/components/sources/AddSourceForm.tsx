@@ -123,7 +123,7 @@ export default function AddSourceForm({ onAdded }: { onAdded: () => void }) {
               const dupe = note === 'Already added';
               return (
                 <li key={c.feedUrl} className="rounded-lg border border-border bg-bg p-3">
-                  <label className="flex cursor-pointer items-start gap-3">
+                  <label className="flex min-h-11 cursor-pointer items-start gap-3">
                     <input
                       type="checkbox"
                       checked={checked.has(c.feedUrl)}
