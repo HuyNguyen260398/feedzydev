@@ -195,6 +195,19 @@ describe('admin auth', () => {
     const r = await route(ev('GET', '/admin/sources/'), mk().deps);
     expect(r.statusCode).toBe(401);
   });
+
+  test.each(['//admin/sources', '/Admin/sources', '/admin%2Fsources'])(
+    'path trick %s without claims is 404, never admin data',
+    async (path) => {
+      const r = await route(ev('GET', path), mk().deps);
+      expect(r.statusCode).toBe(404);
+    },
+  );
+
+  test('/admin exactly without claims is 401', async () => {
+    const r = await route(ev('GET', '/admin'), mk().deps);
+    expect(r.statusCode).toBe(401);
+  });
 });
 
 describe('admin routes', () => {
