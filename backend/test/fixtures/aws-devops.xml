@@ -1,0 +1,1787 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?><rss xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:slash="http://purl.org/rss/1.0/modules/slash/" xmlns:sy="http://purl.org/rss/1.0/modules/syndication/" xmlns:wfw="http://wellformedweb.org/CommentAPI/" version="2.0">
+
+<channel>
+	<title>AWS DevOps &amp; Developer Productivity Blog</title>
+	<atom:link href="https://aws.amazon.com/blogs/devops/feed/" rel="self" type="application/rss+xml"/>
+	<link>https://aws.amazon.com/blogs/devops/</link>
+	<description/>
+	<lastBuildDate>Mon, 05 Oct 2026 20:37:46 +0000</lastBuildDate>
+	<language>en-US</language>
+	<sy:updatePeriod>
+	hourly	</sy:updatePeriod>
+	<sy:updateFrequency>
+	1	</sy:updateFrequency>
+	
+	<item>
+		<title>Restart EC2 and on-premises fleets faster with AWS CodeDeploy RESTART deployment mode</title>
+		<link>https://aws.amazon.com/blogs/devops/restart-ec2-and-on-premises-fleets-faster-with-aws-codedeploy-restart-deployment-mode/</link>
+		
+		<dc:creator><![CDATA[Iskandar Anvarov]]></dc:creator>
+		<pubDate>Mon, 05 Oct 2026 15:46:02 +0000</pubDate>
+				<category><![CDATA[Amazon EC2]]></category>
+		<category><![CDATA[Announcements]]></category>
+		<category><![CDATA[AWS CodeDeploy]]></category>
+		<category><![CDATA[Intermediate (200)]]></category>
+		<guid isPermaLink="false">4c45cef7f04088de736518e08d370c9fac861985</guid>
+
+					<description>AWS CodeDeploy now offers a purpose-built RESTART deployment mode that reapplies the last successful revision to EC2 and on-premises fleets. It keeps restarts inside CodeDeploy with the same batch sizing, health checks, alarm monitoring, and rollback behavior as a standard deployment, and ran up to 6.1x faster in testing.</description>
+										<content:encoded>&lt;p&gt;Operators often restart fleets when they need to pick up runtime configuration changes, recover unhealthy processes, or return hosts to a known state. Before RESTART, AWS CodeDeploy customers either redeployed the current revision, repeating completed work, or ran custom scripts outside of CodeDeploy production safeguards. Now there’s a purpose-built option: RESTART deployment mode. It keeps the operation inside CodeDeploy, so you get the same batch sizing, health checks, alarm monitoring, and rollback behavior as a standard deployment.&lt;/p&gt;
+&lt;p&gt;This new option reapplies the last successful revision to Amazon Elastic Compute Cloud (Amazon EC2) and on-premises in-place deployments. It retains your deployment configurations, lifecycle hooks, Amazon CloudWatch alarm monitoring, rollback settings, and deployment history.&lt;/p&gt;
+&lt;p&gt;In testing, a fleet restart completed up to 6.1x faster than a standard deployment, turning a multi-minute rollout into tens of seconds.&lt;/p&gt;
+&lt;p&gt;In this post, we explain how RESTART works, walk through starting a restart deployment from the command line and the CodeDeploy console, and review the safety controls that carry over from a standard deployment.&lt;/p&gt;
+&lt;h2 id="why-use-a-codedeploy-restart"&gt;Why use a CodeDeploy restart?&lt;/h2&gt;
+&lt;p&gt;A restart changes production even when the application revision stays the same. Hosts stop and start, failures reduce fleet capacity, and external configuration errors spread across restarted hosts. Fleet scripts must recreate batch sizing, minimum healthy capacity, validation, alarm monitoring, and audit history. One customer experienced this firsthand. Their restart script restarted hosts in batches with no health checks in between. When a bad configuration left the first batch unable to start, the script never noticed and continued. What should have been a routine restart took down their fleet.&lt;/p&gt;
+&lt;p&gt;This new deployment mode keeps the operation in CodeDeploy. You configure how the deployment runs with the familiar &lt;code&gt;CreateDeployment&lt;/code&gt; API. CodeDeploy still runs your lifecycle hooks, validates the result, and stops after a health or alarm breach. A failed restart stays within the active batch instead of continuing through the fleet.&lt;/p&gt;
+&lt;p&gt;RESTART also works well as a building block for automated remediation. Point a CloudWatch alarm on a memory or resource-utilization metric at an Amazon EventBridge rule, and have that rule invoke an AWS Lambda function that calls &lt;code&gt;CreateDeployment&lt;/code&gt; with &lt;code&gt;deploymentMode: RESTART&lt;/code&gt;. Long-running or stateful workloads benefit from periodic recycling. Examples include self-managed Kafka brokers and JVM services with memory growth. This turns that recycling into a managed, self-healing loop instead of a cron job or a manual restart. The following diagram shows the flow:&lt;/p&gt;
+&lt;div style="width: 810px" class="wp-caption alignnone"&gt;
+ &lt;a href="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/DEVOPS-25215-1.png" target="_blank" rel="noopener"&gt;&lt;img src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/DEVOPS-25215-1.png" alt="CloudWatch alarm triggering an Amazon EventBridge rule that invokes a Lambda function to call CreateDeployment in RESTART mode" width="800"&gt;&lt;/a&gt;
+ &lt;p class="wp-caption-text"&gt;Figure 1: Automated remediation loop using an Amazon CloudWatch alarm, an Amazon EventBridge rule, and an AWS Lambda function to trigger a RESTART deployment&lt;/p&gt;
+&lt;/div&gt;
+&lt;h2 id="how-restart-works"&gt;How RESTART works&lt;/h2&gt;
+&lt;p&gt;Set &lt;code&gt;deploymentMode&lt;/code&gt; to &lt;code&gt;RESTART&lt;/code&gt; on &lt;code&gt;CreateDeployment&lt;/code&gt; and provide no revision. CodeDeploy resolves the deployment group’s last successful revision and creates a deployment record.&lt;/p&gt;
+&lt;p&gt;Each selected host runs:&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;ApplicationStop&lt;/code&gt; → &lt;code&gt;DownloadBundle&lt;/code&gt; → &lt;code&gt;BeforeInstall&lt;/code&gt; → &lt;code&gt;Install&lt;/code&gt; → &lt;code&gt;AfterInstall&lt;/code&gt; → &lt;code&gt;ApplicationStart&lt;/code&gt; → &lt;code&gt;ValidateService&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;CodeDeploy agents that support local reuse (from &lt;a href="https://docs.aws.amazon.com/codedeploy/latest/userguide/codedeploy-agent.html#codedeploy-agent-version-history" target="_blank" rel="noopener"&gt;version 2.1.0&lt;/a&gt; onward) use the previous deployment’s archive. &lt;code&gt;DownloadBundle&lt;/code&gt; remains in the signed workflow. If the archive is unavailable or invalid, the agent downloads the same pinned revision, covering added or replaced hosts.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;Install&lt;/code&gt; reapplies the revision and corrects drift in managed files. &lt;code&gt;BeforeInstall&lt;/code&gt;, &lt;code&gt;AfterInstall&lt;/code&gt;, and &lt;code&gt;ValidateService&lt;/code&gt; run as defined in the AppSpec file. Local reuse removes the network transfer, and end-to-end savings vary with revision size, agent version, hooks, fleet size, and deployment configuration.&lt;/p&gt;
+&lt;h2 id="performance-in-feature-testing"&gt;Performance in feature testing&lt;/h2&gt;
+&lt;p&gt;Feature tests peaked at 6.14x. Tests used m5.large instances, a 1 GB revision, and 10, 50, and 100-host fleets with and without an Application Load Balancer (ALB). Each scenario ran seven times. We discarded the minimum and maximum and report the median of five. Results combine local reuse with omitted traffic control and are not predictive of results for other applications.&lt;/p&gt;
+&lt;p&gt;At 75 percent minimum healthy, four or five waves saved ALB-backed fleets 397.1 to 424.8 seconds. The 50-host fleet reached 6.14x.&lt;/p&gt;
+&lt;table border="1px" width="100%" cellpadding="10px"&gt;
+ &lt;tbody&gt;
+  &lt;tr&gt;
+   &lt;td&gt;&lt;strong&gt;Host Count&lt;/strong&gt;&lt;/td&gt;
+   &lt;td&gt;&lt;strong&gt;ALB in Front?&lt;/strong&gt;&lt;/td&gt;
+   &lt;td&gt;&lt;strong&gt;Rollout Waves&lt;/strong&gt;&lt;/td&gt;
+   &lt;td&gt;&lt;strong&gt;Standard Deployment Time&lt;/strong&gt;&lt;/td&gt;
+   &lt;td&gt;&lt;strong&gt;Restart Deployment Time&lt;/strong&gt;&lt;/td&gt;
+   &lt;td&gt;&lt;strong&gt;Speedup&lt;/strong&gt;&lt;/td&gt;
+   &lt;td&gt;&lt;strong&gt;Time Saved&lt;/strong&gt;&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;10&lt;/td&gt;
+   &lt;td&gt;Yes&lt;/td&gt;
+   &lt;td&gt;5&lt;/td&gt;
+   &lt;td&gt;526.2s&lt;/td&gt;
+   &lt;td&gt;129.1s&lt;/td&gt;
+   &lt;td&gt;4.08x&lt;/td&gt;
+   &lt;td&gt;397.1s&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;50&lt;/td&gt;
+   &lt;td&gt;Yes&lt;/td&gt;
+   &lt;td&gt;5&lt;/td&gt;
+   &lt;td&gt;507.4s&lt;/td&gt;
+   &lt;td&gt;82.6s&lt;/td&gt;
+   &lt;td&gt;&lt;strong&gt;6.14x&lt;/strong&gt;&lt;/td&gt;
+   &lt;td&gt;&lt;strong&gt;424.8s&lt;/strong&gt;&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;100&lt;/td&gt;
+   &lt;td&gt;Yes&lt;/td&gt;
+   &lt;td&gt;4&lt;/td&gt;
+   &lt;td&gt;544.5s&lt;/td&gt;
+   &lt;td&gt;144.7s&lt;/td&gt;
+   &lt;td&gt;3.76x&lt;/td&gt;
+   &lt;td&gt;399.8s&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;10&lt;/td&gt;
+   &lt;td&gt;No&lt;/td&gt;
+   &lt;td&gt;5&lt;/td&gt;
+   &lt;td&gt;192.4s&lt;/td&gt;
+   &lt;td&gt;167.8s&lt;/td&gt;
+   &lt;td&gt;1.15x&lt;/td&gt;
+   &lt;td&gt;24.6s&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;50&lt;/td&gt;
+   &lt;td&gt;No&lt;/td&gt;
+   &lt;td&gt;5&lt;/td&gt;
+   &lt;td&gt;190.5s&lt;/td&gt;
+   &lt;td&gt;117.2s&lt;/td&gt;
+   &lt;td&gt;1.63x&lt;/td&gt;
+   &lt;td&gt;73.3s&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;100&lt;/td&gt;
+   &lt;td&gt;No&lt;/td&gt;
+   &lt;td&gt;4&lt;/td&gt;
+   &lt;td&gt;260.8s&lt;/td&gt;
+   &lt;td&gt;139.6s&lt;/td&gt;
+   &lt;td&gt;1.87x&lt;/td&gt;
+   &lt;td&gt;121.2s&lt;/td&gt;
+  &lt;/tr&gt;
+ &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;With two-wave &lt;code&gt;HalfAtATime&lt;/code&gt;, ALB-backed fleets saved 168.6–185.7 seconds. No-ALB rows isolate local reuse.&lt;/p&gt;
+&lt;table border="1px" width="100%" cellpadding="10px"&gt;
+ &lt;tbody&gt;
+  &lt;tr&gt;
+   &lt;td&gt;&lt;strong&gt;Host Count&lt;/strong&gt;&lt;/td&gt;
+   &lt;td&gt;&lt;strong&gt;ALB in Front?&lt;/strong&gt;&lt;/td&gt;
+   &lt;td&gt;&lt;strong&gt;Standard Deployment Time&lt;/strong&gt;&lt;/td&gt;
+   &lt;td&gt;&lt;strong&gt;Restart Deployment Time&lt;/strong&gt;&lt;/td&gt;
+   &lt;td&gt;&lt;strong&gt;Speedup&lt;/strong&gt;&lt;/td&gt;
+   &lt;td&gt;&lt;strong&gt;Time Saved&lt;/strong&gt;&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;10&lt;/td&gt;
+   &lt;td&gt;Yes&lt;/td&gt;
+   &lt;td&gt;230.2s&lt;/td&gt;
+   &lt;td&gt;61.6s&lt;/td&gt;
+   &lt;td&gt;3.74x&lt;/td&gt;
+   &lt;td&gt;168.6s&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;50&lt;/td&gt;
+   &lt;td&gt;Yes&lt;/td&gt;
+   &lt;td&gt;276.2s&lt;/td&gt;
+   &lt;td&gt;90.5s&lt;/td&gt;
+   &lt;td&gt;3.05x&lt;/td&gt;
+   &lt;td&gt;&lt;strong&gt;185.7s&lt;/strong&gt;&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;100&lt;/td&gt;
+   &lt;td&gt;Yes&lt;/td&gt;
+   &lt;td&gt;275.2s&lt;/td&gt;
+   &lt;td&gt;103.9s&lt;/td&gt;
+   &lt;td&gt;2.65x&lt;/td&gt;
+   &lt;td&gt;171.3s&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;10&lt;/td&gt;
+   &lt;td&gt;No&lt;/td&gt;
+   &lt;td&gt;133.8s&lt;/td&gt;
+   &lt;td&gt;37.0s&lt;/td&gt;
+   &lt;td&gt;&lt;strong&gt;3.62x&lt;/strong&gt;&lt;/td&gt;
+   &lt;td&gt;96.8s&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;50&lt;/td&gt;
+   &lt;td&gt;No&lt;/td&gt;
+   &lt;td&gt;152.4s&lt;/td&gt;
+   &lt;td&gt;86.7s&lt;/td&gt;
+   &lt;td&gt;1.76x&lt;/td&gt;
+   &lt;td&gt;65.7s&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;100&lt;/td&gt;
+   &lt;td&gt;No&lt;/td&gt;
+   &lt;td&gt;162.7s&lt;/td&gt;
+   &lt;td&gt;109.1s&lt;/td&gt;
+   &lt;td&gt;1.49x&lt;/td&gt;
+   &lt;td&gt;53.6s&lt;/td&gt;
+  &lt;/tr&gt;
+ &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;Multi-wave ALB deployments repeated traffic control and saved the most time. These results carry a couple of safety implications to keep in mind.&lt;/p&gt;
+&lt;h2 id="the-safety-controls-remain-familiar"&gt;The safety controls remain familiar&lt;/h2&gt;
+&lt;p&gt;A RESTART deployment uses the controls already configured for the deployment group:&lt;/p&gt;
+&lt;ul&gt;
+ &lt;li&gt;&lt;strong&gt;Deployment configuration:&lt;/strong&gt; Use &lt;code&gt;CodeDeployDefault.OneAtATime&lt;/code&gt;, &lt;code&gt;CodeDeployDefault.HalfAtATime&lt;/code&gt;, &lt;code&gt;CodeDeployDefault.AllAtOnce&lt;/code&gt;, or a custom minimum healthy host setting to bound concurrent restarts.&lt;/li&gt;
+ &lt;li&gt;&lt;strong&gt;Lifecycle validation:&lt;/strong&gt; CodeDeploy runs &lt;code&gt;ValidateService&lt;/code&gt; on each host before it considers that host healthy.&lt;/li&gt;
+ &lt;li&gt;&lt;strong&gt;CloudWatch alarms:&lt;/strong&gt; CodeDeploy polls the alarms configured on the deployment group and stops the deployment when an alarm enters &lt;code&gt;ALARM&lt;/code&gt;.&lt;/li&gt;
+ &lt;li&gt;&lt;strong&gt;Automatic rollback:&lt;/strong&gt; CodeDeploy applies the deployment group’s automatic rollback configuration for qualifying failures. A rollback can’t reverse an external configuration change, so correct the underlying configuration before retrying.&lt;/li&gt;
+ &lt;li&gt;&lt;strong&gt;Deployment history:&lt;/strong&gt; &lt;code&gt;GetDeployment&lt;/code&gt; and &lt;code&gt;ListDeployments&lt;/code&gt; expose the restart’s status, timestamps, revision, and result for monitoring and audit.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id="traffic-control-behavior"&gt;Traffic-control behavior&lt;/h3&gt;
+&lt;p&gt;RESTART doesn’t run the load balancer &lt;code&gt;BlockTraffic&lt;/code&gt; and &lt;code&gt;AllowTraffic&lt;/code&gt; steps. The host remains registered while its application stops and starts. Treat this as an operational constraint, not as the reason to use RESTART.&lt;/p&gt;
+&lt;p&gt;For request-serving fleets, make &lt;code&gt;ApplicationStop&lt;/code&gt; stop accepting new work and drain in-flight work before the process exits. Select a deployment configuration that preserves enough healthy capacity for the expected restart duration. Pull-based workers stop receiving work when the process stops, but their hooks still need to handle in-flight jobs safely.&lt;/p&gt;
+&lt;h2 id="walk-through-a-restart-deployment"&gt;Walk through a restart deployment&lt;/h2&gt;
+&lt;p&gt;This section walks through starting a restart deployment from the command line and the CodeDeploy console, and then monitoring its progress.&lt;/p&gt;
+&lt;h3 id="prerequisites"&gt;Prerequisites&lt;/h3&gt;
+&lt;ul&gt;
+ &lt;li&gt;An existing Amazon EC2 or on-premises application and deployment group with at least one successful deployment.&lt;/li&gt;
+ &lt;li&gt;An AWS Command Line Interface (AWS CLI) or SDK version that supports the &lt;code&gt;deploymentMode&lt;/code&gt; request field.&lt;/li&gt;
+ &lt;li&gt;CodeDeploy agent version 2.1.0 or newer on target hosts to benefit from local revision reuse. Earlier agents work but fall back to downloading the revision.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id="start-a-restart-deployment-with-the-aws-cli"&gt;Start a restart deployment with the AWS CLI&lt;/h3&gt;
+&lt;p&gt;The following command restarts the fleet with the deployment group’s default deployment configuration:&lt;/p&gt;
+&lt;div class="hide-language"&gt;
+ &lt;pre&gt;&lt;code class="language-bash"&gt;aws deploy create-deployment \
+    --application-name MyApp \
+    --deployment-group-name MyDeploymentGroup \
+    --deployment-mode RESTART \
+    --description "Restart processes after a runtime configuration update"&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;CodeDeploy returns a deployment ID:&lt;/p&gt;
+&lt;div class="hide-language"&gt;
+ &lt;pre&gt;&lt;code class="language-json"&gt;{
+  "deploymentId": "d-EXAMPLE123"
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;To restart one host at a time, provide a deployment configuration in the request:&lt;/p&gt;
+&lt;div class="hide-language"&gt;
+ &lt;pre&gt;&lt;code class="language-bash"&gt;aws deploy create-deployment \
+    --application-name MyApp \
+    --deployment-group-name MyDeploymentGroup \
+    --deployment-mode RESTART \
+    --deployment-config-name CodeDeployDefault.OneAtATime \
+    --description "Restart one host at a time"&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;Omit &lt;code&gt;--deployment-config-name&lt;/code&gt; to use the deployment group’s configured default.&lt;/p&gt;
+&lt;h3 id="start-a-restart-deployment-on-the-console"&gt;Start a restart deployment on the console&lt;/h3&gt;
+&lt;p&gt;You can also use this feature in the CodeDeploy console. Under &lt;strong&gt;Applications&lt;/strong&gt;, select the deployment group you want to restart and choose &lt;strong&gt;Create deployment&lt;/strong&gt;.&lt;/p&gt;
+&lt;div style="width: 810px" class="wp-caption alignnone"&gt;
+ &lt;a href="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/DEVOPS-25215-2.jpg" target="_blank" rel="noopener"&gt;&lt;img src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/DEVOPS-25215-2.jpg" alt="CodeDeploy console Applications page with a deployment group selected and the Create deployment button" width="800"&gt;&lt;/a&gt;
+ &lt;p class="wp-caption-text"&gt;Figure 2: Choosing Create deployment for a deployment group in the CodeDeploy console&lt;/p&gt;
+&lt;/div&gt;
+&lt;p&gt;For &lt;strong&gt;Deployment mode&lt;/strong&gt;, select &lt;strong&gt;Restart&lt;/strong&gt;, and configure any other settings or overrides on the page (the same options you would set with the AWS CLI).&lt;/p&gt;
+&lt;div style="width: 810px" class="wp-caption alignnone"&gt;
+ &lt;a href="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/DEVOPS-25215-3.png" target="_blank" rel="noopener"&gt;&lt;img src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/DEVOPS-25215-3.png" alt="CodeDeploy Create deployment page with Restart selected as the deployment mode" width="800"&gt;&lt;/a&gt;
+ &lt;p class="wp-caption-text"&gt;Figure 3: Selecting Restart as the deployment mode on the Create deployment page&lt;/p&gt;
+&lt;/div&gt;
+&lt;h3 id="monitor-the-restart"&gt;Monitor the restart&lt;/h3&gt;
+&lt;p&gt;You can see the status of the deployment on the console, or use the deployment ID with the &lt;code&gt;GetDeployment&lt;/code&gt; API or CLI command. For example:&lt;/p&gt;
+&lt;div class="hide-language"&gt;
+ &lt;pre&gt;&lt;code class="language-bash"&gt;aws deploy get-deployment --deployment-id d-EXAMPLE123&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;The deployment moves through the standard &lt;code&gt;Created&lt;/code&gt;, &lt;code&gt;InProgress&lt;/code&gt;, and terminal states. If a lifecycle hook fails, the deployment breaches its minimum healthy host requirement, or a configured alarm enters &lt;code&gt;ALARM&lt;/code&gt;, CodeDeploy stops the restart and applies the configured failure behavior.&lt;/p&gt;
+&lt;p&gt;You can distinguish restart deployments by the &lt;code&gt;deploymentMode&lt;/code&gt; field in the &lt;code&gt;GetDeployment&lt;/code&gt; API, or visually on the console under &lt;strong&gt;Deployment details&lt;/strong&gt;.&lt;/p&gt;
+&lt;div style="width: 810px" class="wp-caption alignnone"&gt;
+ &lt;a href="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/DEVOPS-25215-4.png" target="_blank" rel="noopener"&gt;&lt;img src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/DEVOPS-25215-4.png" alt="CodeDeploy console Deployment details showing the deploymentMode field set to RESTART" width="800"&gt;&lt;/a&gt;
+ &lt;p class="wp-caption-text"&gt;Figure 4: Deployment details showing the deploymentMode field set to RESTART&lt;/p&gt;
+&lt;/div&gt;
+&lt;h2 id="handle-alarms-during-incident-recovery"&gt;Handle alarms during incident recovery&lt;/h2&gt;
+&lt;p&gt;If an alarm is already in &lt;code&gt;ALARM&lt;/code&gt; state, &lt;code&gt;CreateDeployment&lt;/code&gt; still creates the deployment. CodeDeploy then stops it when the deployment workflow observes that alarm during polling. The &lt;code&gt;ignorePollAlarmFailure&lt;/code&gt; setting does not ignore an alarm in &lt;code&gt;ALARM&lt;/code&gt;. It only controls behavior when CodeDeploy cannot retrieve alarm state.&lt;/p&gt;
+&lt;p&gt;If an approved incident runbook requires a restart despite the current alarm state, override alarm monitoring for that deployment:&lt;/p&gt;
+&lt;div class="hide-language"&gt;
+ &lt;pre&gt;&lt;code class="language-bash"&gt;aws deploy create-deployment \
+    --application-name MyApp \
+    --deployment-group-name MyDeploymentGroup \
+    --deployment-mode RESTART \
+    --override-alarm-configuration enabled=false \
+    --description "Restart under an approved incident runbook"&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;This override disables all deployment-group alarms for that deployment. It requires &lt;code&gt;codedeploy:UpdateDeploymentGroup&lt;/code&gt; in addition to the permission to create a deployment. Use it only when your incident process provides another health signal and explicitly authorizes the override. The deployment configuration and lifecycle validation continue to apply.&lt;/p&gt;
+&lt;h2 id="request-constraints"&gt;Request constraints&lt;/h2&gt;
+&lt;p&gt;RESTART has the following constraints:&lt;/p&gt;
+&lt;ol type="1"&gt;
+ &lt;li&gt;It supports EC2 and on-premises in-place deployment groups. It doesn’t support Amazon Elastic Container Service (Amazon ECS) or AWS Lambda deployment groups.&lt;/li&gt;
+ &lt;li&gt;The deployment group must have a successful revision for CodeDeploy to reapply.&lt;/li&gt;
+ &lt;li&gt;Don’t provide &lt;code&gt;revision&lt;/code&gt;, &lt;code&gt;s3Location&lt;/code&gt;, &lt;code&gt;gitHubLocation&lt;/code&gt;, or &lt;code&gt;deploymentRevisions&lt;/code&gt;. CodeDeploy resolves the revision from deployment history.&lt;/li&gt;
+ &lt;li&gt;Don’t combine &lt;code&gt;RESTART&lt;/code&gt; with &lt;code&gt;updateOutdatedInstancesOnly&lt;/code&gt;. That option selects hosts that aren’t running the target revision, which conflicts with restarting hosts on the current successful revision.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;For exact request validation and error types, see the &lt;a href="https://docs.aws.amazon.com/codedeploy/latest/APIReference/API_CreateDeployment.html" target="_blank" rel="noopener"&gt;CreateDeployment API reference&lt;/a&gt;.&lt;/p&gt;
+&lt;h2 id="conclusion"&gt;Conclusion&lt;/h2&gt;
+&lt;p&gt;Restarting a fleet is routine, but it still changes production availability and exposes configuration or process failures. RESTART gives the operation a first-class CodeDeploy path instead of requiring a separate fleet script.&lt;/p&gt;
+&lt;p&gt;Set &lt;code&gt;deploymentMode&lt;/code&gt; to &lt;code&gt;RESTART&lt;/code&gt; to reapply the deployment group’s last successful revision. CodeDeploy controls the batch size, runs the lifecycle hooks, validates each host, monitors configured alarms, records the result, and reuses the local revision archive when possible. The operation is faster when the archive is already present, while hosts that need to download it use the normal fallback path.&lt;/p&gt;
+&lt;p&gt;To get started, review the &lt;a href="https://docs.aws.amazon.com/codedeploy/" target="_blank" rel="noopener"&gt;AWS CodeDeploy documentation&lt;/a&gt; and &lt;a href="https://docs.aws.amazon.com/cli/latest/reference/deploy/create-deployment.html" target="_blank" rel="noopener"&gt;create-deployment CLI reference&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;&amp;nbsp;&lt;/p&gt;
+&lt;p style="clear: both"&gt;&lt;/p&gt;
+&lt;hr style="width: 100%"&gt;
+&lt;h2&gt;About the authors&lt;/h2&gt;
+&lt;footer&gt;
+ &lt;div class="blog-author-box" style="padding-top: 2.0em"&gt;
+  &lt;div class="blog-author-image" style="margin-right: 1.0em"&gt;
+   &lt;img loading="lazy" class="alignnone size-full" src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/DEVOPS-25215-5.jpg" alt="Iskandar Anvarov" width="100" height="133"&gt;
+  &lt;/div&gt;
+  &lt;h3 class="lb-h4"&gt;Iskandar Anvarov&lt;/h3&gt;
+  &lt;p style="overflow: hidden"&gt;Iskandar is a software engineer with over 10 years of experience across enterprise software and cloud computing. For the past 4 years, he’s been with Amazon Web Services, building developer tools and cloud infrastructure that support customers at scale. He holds a bachelor’s degree in Business Information Systems from Westminster University in Tashkent.&lt;/p&gt;
+ &lt;/div&gt;
+ &lt;div class="blog-author-box" style="padding-top: 2.0em"&gt;
+  &lt;div class="blog-author-image" style="margin-right: 1.0em"&gt;
+   &lt;img loading="lazy" class="alignnone size-full" src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/DEVOPS-25215-6.jpg" alt="Filip Danić" width="100" height="133"&gt;
+  &lt;/div&gt;
+  &lt;h3 class="lb-h4"&gt;Filip Danić&lt;/h3&gt;
+  &lt;p style="overflow: hidden"&gt;Filip is a software developer with 12 years of experience across service agencies, startups, and enterprise. For the past 5 years he’s been at Amazon, currently a Software Developer Engineer on AWS CodeDeploy. He previously led an internal finance systems team supporting compliance and reporting at scale. Filip holds a bachelor’s degree in Computer Science from the School of Computing (Računarski Fakultet) in Belgrade.&lt;/p&gt;
+ &lt;/div&gt;
+ &lt;div class="blog-author-box" style="padding-top: 2.0em"&gt;
+  &lt;div class="blog-author-image" style="margin-right: 1.0em"&gt;
+   &lt;img loading="lazy" class="alignnone size-full" src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/DEVOPS-25215-7.jpg" alt="Monika Awasthi" width="100" height="133"&gt;
+  &lt;/div&gt;
+  &lt;h3 class="lb-h4"&gt;Monika Awasthi&lt;/h3&gt;
+  &lt;p style="overflow: hidden"&gt;Monika is a Technical Product Manager with over 10 years of experience launching and scaling products across countries and functions. At Amazon Web Services, she builds developer tools that help customers ship software safely and efficiently, drawing on a technical background spanning networking, data analytics, and product management. She holds an engineering degree in Electronics and Communication and an MBA from INSEAD, France.&lt;/p&gt;
+ &lt;/div&gt;
+ &lt;div class="blog-author-box" style="padding-top: 2.0em"&gt;
+  &lt;div class="blog-author-image" style="margin-right: 1.0em"&gt;
+   &lt;img loading="lazy" class="alignnone size-full" src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/DEVOPS-25215-8.jpg" alt="Daz Akbarov" width="100" height="133"&gt;
+  &lt;/div&gt;
+  &lt;h3 class="lb-h4"&gt;Daz Akbarov&lt;/h3&gt;
+  &lt;p style="overflow: hidden"&gt;Daz is a Solutions Architect at Amazon Web Services, based in Munich. For the past 2 years at AWS, he has worked with customers across Central Asia and the Caucasus in Financial Services Industry, helping them migrate to and build on AWS. He focuses on modernization to cloud-native architectures, building serverless applications and enhancing developers’ experience. He has over 7 years of experience in enterprises and startups, including launching (and failing) his own one.&lt;/p&gt;
+ &lt;/div&gt;
+&lt;/footer&gt;</content:encoded>
+					
+		
+		
+			</item>
+<item>
+		<title>Integrate AWS DevOps Agent with third-party tools using Amazon EventBridge</title>
+		<link>https://aws.amazon.com/blogs/devops/integrate-aws-devops-agent-with-third-party-tools-using-amazon-eventbridge/</link>
+		
+		<dc:creator><![CDATA[Toshihiro Furuno]]></dc:creator>
+		<pubDate>Fri, 02 Oct 2026 15:50:00 +0000</pubDate>
+				<category><![CDATA[Amazon EventBridge]]></category>
+		<category><![CDATA[Intermediate (200)]]></category>
+		<category><![CDATA[Technical How-to]]></category>
+		<guid isPermaLink="false">d7e21d5f2bff050953eda45fc9eac33157eb460c</guid>
+
+					<description>Learn how to connect AWS DevOps Agent investigation events to third-party tools such as Jira using Amazon EventBridge and AWS Lambda. This post walks through a deployable AWS CDK solution that automatically creates and updates Jira issues as an investigation progresses, and shows how to adapt the same pattern to ServiceNow, PagerDuty, and other tools.</description>
+										<content:encoded>&lt;p&gt;AWS DevOps Agent investigates operational issues and proposes likely root causes. Many teams, though, want to follow an investigation from where they already work: a ticket in Jira or ServiceNow, or a notification in PagerDuty. When an investigation stays inside the AWS DevOps Agent console, engineers move between tools, and the history of the work is spread across them. This makes the work harder to piece together later.&lt;/p&gt;
+&lt;p&gt;In this post, I use the AWS Cloud Development Kit (AWS CDK) to build a solution for this. It receives AWS DevOps Agent investigation events through Amazon EventBridge and processes them with AWS Lambda. The solution then creates and updates issues in Jira Cloud. I use Jira as the example, but the same pattern applies to other tools with an API.&lt;/p&gt;
+&lt;h2 id="solution-overview"&gt;Solution overview&lt;/h2&gt;
+&lt;p&gt;This solution is an event-driven integration that starts from the investigation events that AWS DevOps Agent emits. When AWS DevOps Agent creates an investigation, it sends an event with the source &lt;code&gt;aws.aidevops&lt;/code&gt; to Amazon EventBridge. An Amazon EventBridge rule matches detail-types that begin with &lt;code&gt;Investigation&lt;/code&gt; (a prefix match) and invokes an AWS Lambda function. The Lambda function calls the Jira Cloud REST API: on &lt;code&gt;Investigation Created&lt;/code&gt; it creates a new issue, and on every other investigation event it adds a comment to the existing issue.&lt;/p&gt;
+&lt;p&gt;To link an issue to an investigation, the solution uses Amazon DynamoDB. On &lt;code&gt;Investigation Created&lt;/code&gt;, it stores the mapping between the investigation &lt;code&gt;task_id&lt;/code&gt; and the Jira issue key in DynamoDB. For later events, it looks up the issue key from that mapping and appends a comment to the same issue. Jira connection details (base URL, user, API token, and project key) are stored in AWS Secrets Manager, so they stay out of the Lambda function’s environment variables and code.&lt;/p&gt;
+&lt;p&gt;With this design, you can add the integration without changing AWS DevOps Agent itself. Amazon EventBridge handles event delivery, so you add a rule and a target when you want another destination. The processing lives in Lambda, so replacing Jira with another tool keeps the change inside the function code.&lt;/p&gt;
+&lt;h2 id="architecture-diagram"&gt;Architecture diagram&lt;/h2&gt;
+&lt;p&gt;The following diagram shows the path an investigation event takes from AWS DevOps Agent to Jira Cloud. The flow runs from the event to the created or updated issue without a manual step.&lt;/p&gt;
+&lt;div style="width: 810px" class="wp-caption alignnone"&gt;
+ &lt;a href="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/DEVOPS-24819-1.png" target="_blank" rel="noopener"&gt;&lt;img src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/DEVOPS-24819-1.png" alt="Event flow from AWS DevOps Agent through an Amazon EventBridge rule to an AWS Lambda function that calls the Jira Cloud REST API, using AWS Secrets Manager for credentials and Amazon DynamoDB for the task-to-issue mapping" width="800"&gt;&lt;/a&gt;
+ &lt;p class="wp-caption-text"&gt;Figure 1: Event flow from AWS DevOps Agent through Amazon EventBridge and AWS Lambda to Jira Cloud&lt;/p&gt;
+&lt;/div&gt;
+&lt;p&gt;The flow works as follows. AWS DevOps Agent emits an investigation event, and an Amazon EventBridge rule (prefix match on &lt;code&gt;Investigation&lt;/code&gt;) captures it and invokes the AWS Lambda function (Jira Issue Creator). The Lambda function reads the Jira credentials from AWS Secrets Manager and stores or reads the mapping between the &lt;code&gt;task_id&lt;/code&gt; and the issue key in Amazon DynamoDB. It then calls the Jira Cloud REST API v3 to create an issue or add a comment.&lt;/p&gt;
+&lt;h2 id="walkthrough"&gt;Walkthrough&lt;/h2&gt;
+&lt;p&gt;The following steps deploy the sample and confirm the behavior. The code is available on GitHub (&lt;a href="https://github.com/aws-samples/sample-aws-devops-agent-eventbridge-integration" target="_blank" rel="noopener"&gt;sample-aws-devops-agent-eventbridge-integration&lt;/a&gt;).&lt;/p&gt;
+&lt;h3 id="prerequisites"&gt;Prerequisites&lt;/h3&gt;
+&lt;p&gt;Before you start, prepare the following. First, an AWS account with permissions to create Lambda, Amazon EventBridge, DynamoDB, Secrets Manager, AWS Identity and Access Management (IAM), and AWS CloudFormation resources. Second, a local development environment with the AWS Command Line Interface (AWS CLI) with configured credentials, the AWS CDK, and &lt;code&gt;Node.js&lt;/code&gt; 18 or later. You also need an &lt;a href="https://docs.aws.amazon.com/devopsagent/latest/userguide/about-aws-devops-agent-what-are-devops-agent-spaces.html" target="_blank" rel="noopener"&gt;Agent Space&lt;/a&gt; in AWS DevOps Agent and a target Jira Cloud project for issue creation.&lt;/p&gt;
+&lt;p&gt;On the Jira side, create one API token. Create the token from your Atlassian account settings, and note the Jira base URL, the email address tied to the token, and the project key where issues are created. You store these values in Secrets Manager in the next step.&lt;/p&gt;
+&lt;h3 id="step-1-store-the-jira-credentials-in-secrets-manager"&gt;Step 1: Store the Jira credentials in Secrets Manager&lt;/h3&gt;
+&lt;p&gt;First, store the Jira connection details in AWS Secrets Manager. The Lambda function reads the credentials from here, so no secret stays in the code or in a parameter. The following command stores the four values as a single secret.&lt;/p&gt;
+&lt;div class="hide-language"&gt;
+ &lt;pre&gt;&lt;code class="language-bash"&gt;export JIRA_BASE_URL="https://your-domain.atlassian.net"
+export JIRA_USER_EMAIL="your-email@example.com"
+export JIRA_API_TOKEN="your-api-token"
+export JIRA_PROJECT_KEY="PROJ"
+export SECRET_NAME="devops-agent-jira-credentials"
+
+aws secretsmanager create-secret \
+  --name ${SECRET_NAME} \
+  --description "Jira credentials for DevOps Agent EventBridge integration" \
+  --secret-string "{\"jiraBaseUrl\":\"${JIRA_BASE_URL}\",\"jiraUserEmail\":\"${JIRA_USER_EMAIL}\",\"jiraApiToken\":\"${JIRA_API_TOKEN}\",\"jiraProjectKey\":\"${JIRA_PROJECT_KEY}\"}"&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;When the command succeeds, it returns the Amazon Resource Name (ARN) of the secret. Note this ARN. You use it in the next step.&lt;/p&gt;
+&lt;h3 id="step-2-deploy-with-the-aws-cdk"&gt;Step 2: Deploy with the AWS CDK&lt;/h3&gt;
+&lt;p&gt;Get the repository and deploy the stack with the CDK. If this is the first time you use the CDK in this Region, run &lt;code&gt;cdk bootstrap&lt;/code&gt; first. When you deploy, pass the ARN of the secret from Step 1 as a parameter.&lt;/p&gt;
+&lt;div class="hide-language"&gt;
+ &lt;pre&gt;&lt;code class="language-bash"&gt;cd cdk
+npm install
+npm run build
+cdk deploy --parameters SecretArn=arn:aws:secretsmanager:ap-northeast-1:123456789012:secret:devops-agent-jira-credentials-AbCdEf&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;This stack creates the Amazon EventBridge rule, the Lambda function, the DynamoDB table, and the related IAM roles. The Lambda function receives only the permission to read the specified secret and to read from and write to the DynamoDB table.&lt;/p&gt;
+&lt;h3 id="step-3-understand-the-investigation-event-structure"&gt;Step 3: Understand the investigation event structure&lt;/h3&gt;
+&lt;p&gt;Knowing what the Lambda function receives makes it more straightforward to adapt the solution to other tools. AWS DevOps Agent sends an event each time the state of an investigation changes. The state moves from &lt;code&gt;PENDING_START&lt;/code&gt; to &lt;code&gt;IN_PROGRESS&lt;/code&gt; to &lt;code&gt;COMPLETED&lt;/code&gt;, and arrives with the detail-types &lt;code&gt;Investigation Created&lt;/code&gt;, &lt;code&gt;Investigation In Progress&lt;/code&gt;, and &lt;code&gt;Investigation Completed&lt;/code&gt;. Alongside these three, you handle &lt;code&gt;Investigation Failed&lt;/code&gt;, &lt;code&gt;Investigation Timed Out&lt;/code&gt;, &lt;code&gt;Investigation Cancelled&lt;/code&gt;, and &lt;code&gt;Investigation Priority Updated&lt;/code&gt; through the same mechanism.&lt;/p&gt;
+&lt;p&gt;The following is part of an &lt;code&gt;Investigation Created&lt;/code&gt; event. The &lt;code&gt;detail.metadata.task_id&lt;/code&gt; value uniquely identifies the investigation, and the solution uses it as the DynamoDB key.&lt;/p&gt;
+&lt;div class="hide-language"&gt;
+ &lt;pre&gt;&lt;code class="language-json"&gt;{
+  "detail-type": "Investigation Created",
+  "source": "aws.aidevops",
+  "detail": {
+    "metadata": {
+      "agent_space_id": "a1b2c3d4-...",
+      "task_id": "f1e2d3c4-...",
+      "execution_id": "exe-ops1-..."
+    },
+    "data": {
+      "task_type": "INVESTIGATION",
+      "priority": "MEDIUM",
+      "status": "PENDING_START"
+    }
+  }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;The Amazon EventBridge event does not include the investigation title or description. To fill in the summary and body of the issue, the Lambda function calls the AWS DevOps Agent &lt;code&gt;GetBacklogTask&lt;/code&gt; API. The &lt;code&gt;Investigation Completed&lt;/code&gt; event includes &lt;code&gt;data.summary_record_id&lt;/code&gt;, which you use to retrieve the investigation summary.&lt;/p&gt;
+&lt;h3 id="step-4-confirm-the-behavior"&gt;Step 4: Confirm the behavior&lt;/h3&gt;
+&lt;p&gt;When you start an investigation in AWS DevOps Agent, it emits an &lt;code&gt;Investigation Created&lt;/code&gt; event, and the Lambda function creates an issue in Jira. The following screen shows an investigation starting in the AWS DevOps Agent console. The Investigation timeline shows the first event, where an Amazon CloudWatch alarm entered the ALARM state.&lt;/p&gt;
+&lt;div style="width: 810px" class="wp-caption alignnone"&gt;
+ &lt;a href="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/DEVOPS-24819-2.png" target="_blank" rel="noopener"&gt;&lt;img src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/DEVOPS-24819-2.png" alt="AWS DevOps Agent console showing an investigation starting, with the investigation timeline’s first event indicating an Amazon CloudWatch alarm in the ALARM state" width="800"&gt;&lt;/a&gt;
+ &lt;p class="wp-caption-text"&gt;Figure 2: An investigation starting in the AWS DevOps Agent console&lt;/p&gt;
+&lt;/div&gt;
+&lt;p&gt;At this point, a new issue is created on the Jira side. The following screen shows the Jira board, where a single issue created by AWS DevOps Agent (its summary begins with &lt;code&gt;[DevOps Agent]&lt;/code&gt;) appears in the &lt;strong&gt;To Do&lt;/strong&gt; column.&lt;/p&gt;
+&lt;div style="width: 810px" class="wp-caption alignnone"&gt;
+ &lt;a href="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/DEVOPS-24819-3.png" target="_blank" rel="noopener"&gt;&lt;img src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/DEVOPS-24819-3.png" alt="Jira board with a single issue created by AWS DevOps Agent in the To Do column" width="800"&gt;&lt;/a&gt;
+ &lt;p class="wp-caption-text"&gt;Figure 3: The new Jira issue in the To Do column&lt;/p&gt;
+&lt;/div&gt;
+&lt;p&gt;When you open the issue, the detail looks like the following. The description holds the investigation title and the alarm details, along with metadata such as &lt;code&gt;task_id&lt;/code&gt;, &lt;code&gt;execution_id&lt;/code&gt;, &lt;code&gt;agent_space_id&lt;/code&gt;, and the status. The Lambda function assembles these from the Amazon EventBridge event and the &lt;code&gt;GetBacklogTask&lt;/code&gt; API.&lt;/p&gt;
+&lt;div style="width: 810px" class="wp-caption alignnone"&gt;
+ &lt;a href="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/DEVOPS-24819-4.png" target="_blank" rel="noopener"&gt;&lt;img src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/DEVOPS-24819-4.png" alt="Jira issue detail showing the investigation title, alarm details, and metadata including task_id, execution_id, and agent_space_id" width="800"&gt;&lt;/a&gt;
+ &lt;p class="wp-caption-text"&gt;Figure 4: The Jira issue detail with investigation metadata&lt;/p&gt;
+&lt;/div&gt;
+&lt;p&gt;As the investigation progresses and the state changes, the Lambda function looks up the issue key in DynamoDB and adds a comment to the same issue. When the investigation completes, AWS DevOps Agent presents a root cause. The following screen shows the cause summarized as an intentionally failing Lambda function.&lt;/p&gt;
+&lt;div style="width: 810px" class="wp-caption alignnone"&gt;
+ &lt;a href="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/DEVOPS-24819-5.png" target="_blank" rel="noopener"&gt;&lt;img src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/DEVOPS-24819-5.png" alt="AWS DevOps Agent console showing a completed investigation with the root cause identified as an intentionally failing Lambda function" width="800"&gt;&lt;/a&gt;
+ &lt;p class="wp-caption-text"&gt;Figure 5: The completed investigation and its root cause in the AWS DevOps Agent console&lt;/p&gt;
+&lt;/div&gt;
+&lt;p&gt;At the same time, a comment with the investigation result is appended to the Jira issue. The comment in the following screen includes the &lt;code&gt;Investigation Completed&lt;/code&gt; status and an Investigation Summary that covers the symptoms, findings, and root cause.&lt;/p&gt;
+&lt;div style="width: 810px" class="wp-caption alignnone"&gt;
+ &lt;a href="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/DEVOPS-24819-6.png" target="_blank" rel="noopener"&gt;&lt;img src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/DEVOPS-24819-6.png" alt="Jira issue comment showing the Investigation Completed status and an investigation summary of symptoms, findings, and root cause" width="800"&gt;&lt;/a&gt;
+ &lt;p class="wp-caption-text"&gt;Figure 6: The investigation result appended as a Jira comment&lt;/p&gt;
+&lt;/div&gt;
+&lt;p&gt;Through this flow, an engineer follows the investigation from start to finish by looking at Jira alone, without switching between the AWS DevOps Agent console and Jira.&lt;/p&gt;
+&lt;h3 id="adapting-to-other-tools"&gt;Adapting to other tools&lt;/h3&gt;
+&lt;p&gt;The same pattern applies to other tools with an API. What you change is mainly the body of the Lambda function. For ServiceNow, you replace the issue-creation call with the incident-creation API. For PagerDuty, you call its notification API instead of creating or updating an issue. The Amazon EventBridge rule and the DynamoDB mapping stay the same, so you don’t rebuild them for each destination. Storing credentials in Secrets Manager is also common across tools.&lt;/p&gt;
+&lt;h2 id="clean-up"&gt;Clean up&lt;/h2&gt;
+&lt;p&gt;When you finish testing, delete the resources you no longer need to avoid future charges. First, delete the CDK stack.&lt;/p&gt;
+&lt;div class="hide-language"&gt;
+ &lt;pre&gt;&lt;code class="language-bash"&gt;cd cdk
+cdk destroy&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;Next, delete the Jira credentials stored in Secrets Manager.&lt;/p&gt;
+&lt;div class="hide-language"&gt;
+ &lt;pre&gt;&lt;code class="language-bash"&gt;aws secretsmanager delete-secret \
+  --secret-id devops-agent-jira-credentials \
+  --force-delete-without-recovery&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;The DynamoDB table and the Lambda function are created as part of the CDK stack, so deleting the stack removes them as well.&lt;/p&gt;
+&lt;h2 id="conclusion"&gt;Conclusion&lt;/h2&gt;
+&lt;p&gt;In this post, I used the AWS CDK to build a solution for connecting AWS DevOps Agent to Jira Cloud. It receives investigation events through Amazon EventBridge, processes them with AWS Lambda, and creates and updates issues in Jira. Because you follow the investigation from the Jira side, engineers keep working inside the tools they already use. By storing credentials in AWS Secrets Manager and mapping investigations to issues in Amazon DynamoDB, you keep each state change on the same issue. The same design applies to other tools with an API, such as ServiceNow and PagerDuty.&lt;/p&gt;
+&lt;p&gt;Deploy the GitHub sample (&lt;a href="https://github.com/aws-samples/sample-aws-devops-agent-eventbridge-integration" target="_blank" rel="noopener"&gt;sample-aws-devops-agent-eventbridge-integration&lt;/a&gt;) to your own account and try it until an investigation event reaches Jira. To learn more about AWS DevOps Agent itself, see the &lt;a href="https://aws.amazon.com/devops-agent/" target="_blank" rel="noopener"&gt;service detail page&lt;/a&gt; and the launch post &lt;a href="https://aws.amazon.com/blogs/mt/announcing-general-availability-of-aws-devops-agent/" target="_blank" rel="noopener"&gt;Announcing General Availability of AWS DevOps Agent&lt;/a&gt;. To learn more about the Amazon EventBridge integration, see the AWS documentation (&lt;a href="https://docs.aws.amazon.com/devopsagent/latest/userguide/configuring-integrations-and-knowledge-integrating-devops-agent-into-event-driven-applications-using-amazon-eventbridge-index.html" target="_blank" rel="noopener"&gt;Integrating AWS DevOps Agent with Amazon EventBridge&lt;/a&gt; and &lt;a href="https://docs.aws.amazon.com/devopsagent/latest/userguide/integrating-devops-agent-into-event-driven-applications-using-amazon-eventbridge-devops-agent-events-detail-reference.html" target="_blank" rel="noopener"&gt;AWS DevOps Agent events detail reference&lt;/a&gt;).&lt;/p&gt;
+&lt;p&gt;&amp;nbsp;&lt;/p&gt;
+&lt;p style="clear: both"&gt;&lt;/p&gt;
+&lt;hr style="width: 100%"&gt;
+&lt;h2&gt;About the author&lt;/h2&gt;
+&lt;footer&gt;
+ &lt;div class="blog-author-box" style="padding-top: 2.0em"&gt;
+  &lt;div class="blog-author-image" style="margin-right: 1.0em"&gt;
+   &lt;img loading="lazy" class="alignnone size-full" src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/DEVOPS-24819-7.jpg" alt="Toshihiro Furuno" width="100" height="133"&gt;
+  &lt;/div&gt;
+  &lt;h3 class="lb-h4"&gt;Toshihiro Furuno&lt;/h3&gt;
+  &lt;p style="overflow: hidden"&gt;Toshihiro is a Senior Cloud Support Engineer on the AWS Deployment Support team. Toshihiro is passionate about helping customers use containers and continuous integration and continuous delivery (CI/CD). Outside of work, Toshihiro enjoys spending time with family.&lt;/p&gt;
+ &lt;/div&gt;
+&lt;/footer&gt;</content:encoded>
+					
+		
+		
+			</item>
+<item>
+		<title>Closed-loop incident response: connect AWS DevOps Agent to OpenSearch</title>
+		<link>https://aws.amazon.com/blogs/devops/closed-loop-incident-response-connect-aws-devops-agent-to-opensearch/</link>
+		
+		<dc:creator><![CDATA[Sitaraman Vijay Krishna]]></dc:creator>
+		<pubDate>Fri, 02 Oct 2026 15:24:49 +0000</pubDate>
+				<category><![CDATA[Advanced (300)]]></category>
+		<category><![CDATA[Amazon OpenSearch Service]]></category>
+		<category><![CDATA[Technical How-to]]></category>
+		<guid isPermaLink="false">5080de6b6b50b8f97862cda1d3b984a04a447762</guid>
+
+					<description>Connect AWS DevOps Agent to your Amazon OpenSearch Service observability data using the Model Context Protocol (MCP), so an alert that fires at 2 AM triggers autonomous root cause investigation. Covers three MCP server hosting paths (self-managed on Amazon ECS, Amazon Bedrock AgentCore, or built-in OpenSearch 3.3+), plus alert routing and FGAC role mapping.</description>
+										<content:encoded>&lt;p&gt;The gap in most observability setups isn’t the data, it’s closing the loop between incident detection and response. Your &lt;a href="https://aws.amazon.com/opensearch-service/" target="_blank" rel="noopener"&gt;Amazon OpenSearch Service&lt;/a&gt; domain already stores structured logs and distributed traces, detects anomalies through alerting monitors, and fires notifications reliably. But when the system sends that alert lands at 2 AM, your engineers must still investigate manually. The investigating engineer opens Dashboards, crafts domain-specific language (DSL) queries, hunts for correlated trace IDs, pivots to AWS CloudTrail, and pieces together a root cause. That manual loop can take anywhere from minutes for straightforward issues to hours when failures cascade across microservices.&lt;/p&gt;
+&lt;p&gt;What if you closed the loop by connecting an AI agent directly to the indices that triggered the alert?&lt;/p&gt;
+&lt;p&gt;This post shows you how to connect &lt;a href="https://docs.aws.amazon.com/devopsagent/latest/userguide/" target="_blank" rel="noopener"&gt;AWS DevOps Agent&lt;/a&gt; to your OpenSearch observability data using the &lt;a href="https://modelcontextprotocol.io/" target="_blank" rel="noopener"&gt;Model Context Protocol (MCP)&lt;/a&gt;. The same alert that would page a human instead triggers the agent to query the logs and traces automatically, correlate them with AWS CloudTrail and Amazon CloudWatch, and deliver a root cause analysis.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Note:&lt;/strong&gt; AWS DevOps Agent access to logs and traces in OpenSearch is controlled by the fine-grained access control (FGAC) role it is given.&lt;/p&gt;
+&lt;p&gt;We present three hosting paths for the MCP server so you can pick by AWS Region and operational preference: self-managed on Amazon Elastic Container Service (Amazon ECS) (AWS Fargate behind an internal Network Load Balancer (NLB), reachable through Amazon VPC Lattice, which works everywhere today), Amazon Bedrock AgentCore (a one-click AWS CloudFormation template, where available), or the built-in MCP endpoint on OpenSearch 3.3+ (no separate server). All paths use the official &lt;code&gt;opensearch-mcp-server-py&lt;/code&gt; package.&lt;/p&gt;
+&lt;p&gt;By the end, you can deploy the MCP server (any of the three paths), register it as a Capability Provider, configure the AWS Identity and Access Management (IAM)-to-FGAC role mapping, route your OpenSearch alerts to the agent’s Event Channel, and verify the closed loop with a controlled failure.&lt;/p&gt;
+&lt;h2 id="solution-overview"&gt;Solution overview&lt;/h2&gt;
+&lt;p&gt;The architecture creates a closed loop: your OpenSearch domain handles both detection and investigation, with AWS DevOps Agent orchestrating the response.&lt;/p&gt;
+&lt;div style="width: 810px" class="wp-caption alignnone"&gt;
+ &lt;a href="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/10/01/DEVOPS-24818-1.png" target="_blank" rel="noopener"&gt;&lt;img src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/10/01/DEVOPS-24818-1.png" alt="Closed-loop flow from OpenSearch alerting through Amazon SNS and a webhook forwarder to AWS DevOps Agent investigation" width="800"&gt;&lt;/a&gt;
+ &lt;p class="wp-caption-text"&gt;Figure 1: Architecture for Amazon OpenSearch alert to AWS DevOps Agent MCP investigation&lt;/p&gt;
+&lt;/div&gt;
+&lt;p&gt;Closed-loop architecture: OpenSearch Alerting triggers Amazon Simple Notification Service (Amazon SNS), which flows through a webhook forwarder to the Event Channel of AWS DevOps Agent. The agent investigates by querying OpenSearch indices using MCP tools, correlates with CloudTrail and CloudWatch, and delivers a root cause analysis.&lt;/p&gt;
+&lt;p&gt;The loop runs in six stages:&lt;/p&gt;
+&lt;ol type="1"&gt;
+ &lt;li&gt;Applications emit logs and traces to OpenSearch.&lt;/li&gt;
+ &lt;li&gt;Alerting monitors detect anomalies and publish to Amazon SNS.&lt;/li&gt;
+ &lt;li&gt;Amazon SNS triggers the webhook forwarder AWS Lambda function.&lt;/li&gt;
+ &lt;li&gt;The webhook forwarder Lambda transforms each notification into a hash-based message authentication code (HMAC)-signed payload for the agent’s Event Channel.&lt;/li&gt;
+ &lt;li&gt;AWS DevOps Agent queries the OpenSearch indices through MCP and correlates them with CloudTrail and CloudWatch.&lt;/li&gt;
+ &lt;li&gt;AWS DevOps Agent delivers a root cause analysis.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;The critical insight: AWS DevOps Agent consumes remote MCP servers registered as Capability Providers. AWS DevOps Agent doesn’t connect to local MCP servers running on developer workstations (those are used by OpenSearch MCP apps for IDEs). The agent needs a network-accessible endpoint: either self-managed on Amazon ECS, hosted on Bedrock AgentCore, or built into the OpenSearch domain itself (3.3+).&lt;/p&gt;
+&lt;h3 id="choosing-a-hosting-path"&gt;Choosing a hosting path&lt;/h3&gt;
+&lt;p&gt;This post walks through the &lt;strong&gt;self-managed path in detail&lt;/strong&gt; (works everywhere today) and calls out the &lt;strong&gt;AgentCore&lt;/strong&gt; and &lt;strong&gt;built-in 3.3+&lt;/strong&gt; alternatives at each step.&lt;/p&gt;
+&lt;h2 id="prerequisites"&gt;Prerequisites&lt;/h2&gt;
+&lt;p&gt;Confirm the following before starting:&lt;/p&gt;
+&lt;ul&gt;
+ &lt;li&gt;An Amazon OpenSearch Service managed domain (2.x+) with FGAC enabled, application logs and traces already indexed, and Alerting monitors publishing to an SNS topic.&lt;/li&gt;
+ &lt;li&gt;AWS DevOps Agent enabled in your account.&lt;/li&gt;
+ &lt;li&gt;AWS Cloud Development Kit (AWS CDK) (&lt;code&gt;npm install -g aws-cdk&lt;/code&gt;, Node.js 18+) and AWS Command Line Interface (AWS CLI) v2 configured with admin access to your OpenSearch domain.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;Note:&lt;/strong&gt; This walkthrough assumes you already have an application emitting logs and traces to OpenSearch. The infrastructure in this post is shown as inline CDK snippets you can drop into your own CDK app and adapt to your environment.&lt;/p&gt;
+&lt;h2 id="step-1-deploy-the-opensearch-mcp-server"&gt;Step 1: Deploy the OpenSearch MCP server&lt;/h2&gt;
+&lt;p&gt;Choose the path that fits your Region. The suggested options host the official &lt;code&gt;opensearch-mcp-server-py&lt;/code&gt; and expose the same MCP tools (&lt;code&gt;SearchIndexTool&lt;/code&gt;, &lt;code&gt;ListIndexTool&lt;/code&gt;, and the broader observability tool set) to AWS DevOps Agent.&lt;/p&gt;
+&lt;h3 id="option-a-self-managed-on-amazon-ecs-and-nlb-deploy-anywhere"&gt;Option A: Self-managed on Amazon ECS and NLB (deploy anywhere)&lt;/h3&gt;
+&lt;p&gt;This path runs the MCP server on ECS Fargate behind an &lt;strong&gt;internal Network Load Balancer&lt;/strong&gt; and exposes it to AWS DevOps Agent through a &lt;strong&gt;VPC Lattice private connection&lt;/strong&gt;. It works in every Region today.&lt;/p&gt;
+&lt;div style="width: 810px" class="wp-caption alignnone"&gt;
+ &lt;a href="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/10/01/DEVOPS-24818-2.png" target="_blank" rel="noopener"&gt;&lt;img src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/10/01/DEVOPS-24818-2.png" alt="Self-managed MCP server on Amazon ECS Fargate behind an internal NLB, reached by AWS DevOps Agent over VPC Lattice" width="800"&gt;&lt;/a&gt;
+ &lt;p class="wp-caption-text"&gt;Figure 2: Architecture for self-managed OpenSearch MCP deployed on AWS Fargate&lt;/p&gt;
+&lt;/div&gt;
+&lt;h4 id="generate-a-transport-layer-security-tls-certificate-for-the-mcp-server"&gt;1. Generate a Transport Layer Security (TLS) certificate for the MCP server&lt;/h4&gt;
+&lt;p&gt;AWS DevOps Agent requires HTTPS endpoints. Generate a self-signed certificate whose &lt;strong&gt;subject alternative name (SAN) matches your NLB DNS name&lt;/strong&gt;, and import it to AWS Certificate Manager (ACM):&lt;/p&gt;
+&lt;div class="hide-language"&gt;
+ &lt;pre&gt;&lt;code class="language-bash"&gt;# Generate a self-signed cert whose SAN matches the NLB DNS, then import to ACM
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout /tmp/mcp-key.pem -out /tmp/mcp-cert.pem \
+  -subj "/CN=mcp-server" -addext "subjectAltName=DNS:&amp;lt;your-nlb-dns&amp;gt;"
+aws acm import-certificate --certificate fileb:///tmp/mcp-cert.pem \
+  --private-key fileb:///tmp/mcp-key.pem --region &amp;lt;region&amp;gt; \
+  --query "CertificateArn" --output text&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;Save the returned certificate Amazon Resource Name (ARN) for the next step.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Why the SAN matters:&lt;/strong&gt; VPC Lattice validates the certificate against the host address you configure for the private connection. If the SAN doesn’t match the NLB DNS, TLS validation fails and the connection never reaches &lt;code&gt;Completed&lt;/code&gt;.&lt;/p&gt;
+&lt;h4 id="define-the-mcp-server-in-your-cdk-app"&gt;2. Define the MCP server in your CDK app&lt;/h4&gt;
+&lt;p&gt;Run &lt;code&gt;opensearch-mcp-server-py&lt;/code&gt; as an Amazon ECS Fargate service behind an internal NLB. The following snippet shows the essential wiring. Adapt it to your existing CDK app:&lt;/p&gt;
+&lt;div class="hide-language"&gt;
+ &lt;pre&gt;&lt;code class="language-javascript"&gt;// Representative wiring — adapt into your CDK app (full construct in the linked Guidance).
+// Fargate task runs the MCP server; grant it read on the domain (FGAC handles index auth).
+taskDef.addContainer('mcp', {
+  image: ecs.ContainerImage.fromRegistry('python:3.12-slim'),
+  command: ['sh','-c', 'pip install opensearch-mcp-server-py --quiet &amp;amp;&amp;amp; '
+    + 'opensearch-mcp-server-py --transport stream --host 0.0.0.0 --port 8080'],
+  environment: { OPENSEARCH_URL: https://${props.openSearchDomain.domainEndpoint},
+    OPENSEARCH_USE_SSL: 'true' }, portMappings: [{ containerPort: 8080 }] });
+// Internal NLB — MUST have a security group so VPC Lattice can reach it; TLS listener
+// terminates with your ACM cert and forwards TCP:8080 to the service.
+// Output the NLB DNS and task role ARN for Steps 2 and 3.&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;Deploy it (&lt;code&gt;cdk deploy --require-approval broadening --region &amp;lt;region&amp;gt;&lt;/code&gt;) and note the NLB DNS and task role ARN from the stack outputs. You’ll need the stack outputs for the private connection (Step 2) and the FGAC mapping (Step 3).&lt;/p&gt;
+&lt;p&gt;The server starts in streamable-HTTP mode (–transport stream). Installing the package at container startup adds approximately 30 seconds to the first task boot up time. The higher task sizing (1024 MB/512 CPU) helps pip install complete quickly, and the health check’s unhealthyThresholdCount: 5 gives the service approximately 2.5 minutes to stabilize. For production, bake the package into a prebuilt image to avoid startup latency entirely.&lt;/p&gt;
+&lt;h4 id="critical-use-a-network-load-balancer-nlb-not-an-application-load-balancer-alb"&gt;3. Critical: Use a Network Load Balancer (NLB), not an Application Load Balancer (ALB)&lt;/h4&gt;
+&lt;p&gt;The OpenSearch MCP servers use the &lt;strong&gt;streamable-HTTP transport&lt;/strong&gt;, which delivers responses as Server-Sent Events (SSE) with chunked transfer encoding. Application Load Balancers (ALBs) operate at Layer 7 and can strip the &lt;code&gt;Transfer-Encoding: chunked&lt;/code&gt; header, breaking the SSE stream. Network Load Balancers operate at Layer 4 (TCP) and pass HTTP framing untouched after TLS termination. Therefore deploy a streamable-HTTP MCP server behind an NLB with TLS termination and not an ALB.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Important:&lt;/strong&gt; The NLB must have a security group so VPC Lattice resource gateway ENIs can reach it, and a security group can only be attached to an NLB at creation time (it cannot be added later). The CDK stack attaches one. If you build your own NLB, specify the security group when you create it.&lt;/p&gt;
+&lt;h3 id="option-b-amazon-bedrock-agentcore-managed-where-available"&gt;Option B: Amazon Bedrock AgentCore (managed, where available)&lt;/h3&gt;
+&lt;p&gt;&lt;a href="https://aws.amazon.com/bedrock/agentcore/faqs/?trk=96c7de5d-e87e-4f2d-9f26-80ea70660d09&amp;amp;sc_channel=ps#:~:text=Which%20regions%20is%20AgentCore%20available%20in%3F" target="_blank" rel="noopener"&gt;If your Region supports the integration&lt;/a&gt;, the OpenSearch console provides a one-click CloudFormation template that deploys &lt;code&gt;opensearch-mcp-server-py&lt;/code&gt; on AgentCore.&lt;/p&gt;
+&lt;div style="width: 810px" class="wp-caption alignnone"&gt;
+ &lt;a href="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/10/01/DEVOPS-24818-3.png" target="_blank" rel="noopener"&gt;&lt;img src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/10/01/DEVOPS-24818-3.png" alt="OpenSearch MCP server hosted on Amazon Bedrock AgentCore and registered with AWS DevOps Agent" width="800"&gt;&lt;/a&gt;
+ &lt;p class="wp-caption-text"&gt;Figure 3: Architecture for OpenSearch MCP deployed on Amazon Bedrock AgentCore&lt;/p&gt;
+&lt;/div&gt;
+&lt;ol type="1"&gt;
+ &lt;li&gt;Open the &lt;strong&gt;Amazon OpenSearch Service console&lt;/strong&gt;, select your domain, and go to &lt;strong&gt;Integrations&lt;/strong&gt;.&lt;/li&gt;
+ &lt;li&gt;Locate the &lt;strong&gt;MCP server template&lt;/strong&gt; and choose &lt;strong&gt;Launch stack&lt;/strong&gt;.&lt;/li&gt;
+ &lt;li&gt;Provide the parameters:&lt;/li&gt;
+&lt;/ol&gt;
+&lt;table border="1px" width="100%" cellpadding="10px"&gt;
+ &lt;tbody&gt;
+  &lt;tr&gt;
+   &lt;td&gt;&lt;strong&gt;Parameter&lt;/strong&gt;&lt;/td&gt;
+   &lt;td&gt;&lt;strong&gt;Description&lt;/strong&gt;&lt;/td&gt;
+   &lt;td&gt;&lt;strong&gt;Example&lt;/strong&gt;&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;&lt;code&gt;OpenSearchEndpoint&lt;/code&gt;&lt;/td&gt;
+   &lt;td&gt;Your domain’s endpoint&lt;/td&gt;
+   &lt;td&gt;&lt;code&gt;https://my-domain.&amp;lt;region&amp;gt;.es.amazonaws.com&lt;/code&gt;&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;&lt;code&gt;AWSRegion&lt;/code&gt;&lt;/td&gt;
+   &lt;td&gt;Region where the domain runs&lt;/td&gt;
+   &lt;td&gt;&lt;code&gt;&amp;lt;region&amp;gt;&lt;/code&gt;&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;&lt;code&gt;AgentName&lt;/code&gt;&lt;/td&gt;
+   &lt;td&gt;Logical name for this MCP server&lt;/td&gt;
+   &lt;td&gt;&lt;code&gt;opensearch-observability-mcp&lt;/code&gt;&lt;/td&gt;
+  &lt;/tr&gt;
+ &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;After the stack reaches &lt;code&gt;CREATE_COMPLETE&lt;/code&gt;, note from the &lt;strong&gt;Outputs&lt;/strong&gt; tab: &lt;code&gt;AgentCoreEndpoint&lt;/code&gt;, &lt;code&gt;CognitoClientId&lt;/code&gt;, &lt;code&gt;CognitoClientSecret&lt;/code&gt;, and &lt;code&gt;McpServerRoleArn&lt;/code&gt; (needed for FGAC in Step 3).&lt;/p&gt;
+&lt;p&gt;Verify the tools are registered:&lt;/p&gt;
+&lt;div class="hide-language"&gt;
+ &lt;pre&gt;&lt;code class="language-bash"&gt;# Fetch an OAuth token, then confirm the tools list. Expect SearchIndexTool, ListIndexTool.
+curl -s -X POST "https://&amp;lt;AgentCoreEndpoint&amp;gt;" -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' \
+  | jq '.result.tools[].name'&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;h3 id="option-c-opensearch-3.3-built-in-mcp"&gt;Option C: OpenSearch 3.3+ built-in MCP&lt;/h3&gt;
+&lt;div style="width: 810px" class="wp-caption alignnone"&gt;
+ &lt;a href="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/10/01/DEVOPS-24818-4.png" target="_blank" rel="noopener"&gt;&lt;img src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/10/01/DEVOPS-24818-4.png" alt="OpenSearch 3.3+ domain exposing a built-in MCP endpoint registered directly with AWS DevOps Agent" width="800"&gt;&lt;/a&gt;
+ &lt;p class="wp-caption-text"&gt;Figure 4: MCP deployment architecture for domains running OpenSearch version 3.3+&lt;/p&gt;
+&lt;/div&gt;
+&lt;p&gt;This is the simplified path for domains running OpenSearch 3.3+. These versions have a built-in MCP endpoint, so no separate server deployment is needed. Enable the endpoint with two API calls:&lt;/p&gt;
+&lt;div class="hide-language"&gt;
+ &lt;pre&gt;&lt;code class="language-bash"&gt;curl -XPUT "https://&amp;lt;domain-endpoint&amp;gt;/_cluster/settings" \
+  -H "Content-Type: application/json" \
+  --aws-sigv4 "aws:amz:&amp;lt;region&amp;gt;:es" \
+  -d '{"persistent": {"plugins.ml_commons.mcp_server_enabled": "true"}}'
+
+curl -XPOST "https://&amp;lt;domain-endpoint&amp;gt;/_plugins/_ml/mcp/tools/_register" \
+  -H "Content-Type: application/json" \
+  --aws-sigv4 "aws:amz:&amp;lt;region&amp;gt;:es" \
+  -d '{"tools": ["SearchIndexTool", "ListIndexTool"]}'&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;Your MCP endpoint is live at &lt;code&gt;https://&amp;lt;domain-endpoint&amp;gt;/_plugins/_ml/mcp&lt;/code&gt;. In Step 2, register this URL directly with AWS DevOps Agent using &lt;strong&gt;SigV4 authentication&lt;/strong&gt; (service=&lt;code&gt;es&lt;/code&gt;).&lt;/p&gt;
+&lt;h2 id="step-2-register-with-aws-devops-agent"&gt;Step 2: Register with AWS DevOps Agent&lt;/h2&gt;
+&lt;p&gt;With the MCP server running, register it as a Capability Provider so AWS DevOps Agent can invoke its tools during investigations.&lt;/p&gt;
+&lt;p&gt;The private connection in section 2.1 applies only to the self-managed path (Option A). For the AgentCore and built-in paths, skip to section 2.2.&lt;/p&gt;
+&lt;h3 id="create-a-private-connection"&gt;2.1 Create a private connection&lt;/h3&gt;
+&lt;p&gt;A private connection creates a secure network path between AWS DevOps Agent and your NLB using &lt;a href="https://docs.aws.amazon.com/vpc-lattice/latest/ug/" target="_blank" rel="noopener"&gt;Amazon VPC Lattice&lt;/a&gt;.&lt;/p&gt;
+&lt;ol type="1"&gt;
+ &lt;li&gt;Open the &lt;strong&gt;AWS DevOps Agent console&lt;/strong&gt;.&lt;/li&gt;
+ &lt;li&gt;Navigate to &lt;strong&gt;Capability Providers&lt;/strong&gt; then &lt;strong&gt;Private connections&lt;/strong&gt; and choose &lt;strong&gt;Create a new connection&lt;/strong&gt;.
+  &lt;ul&gt;
+   &lt;li&gt;Configure the connection with these settings:
+    &lt;ul&gt;
+     &lt;li&gt;For &lt;strong&gt;Name&lt;/strong&gt;, enter &lt;code&gt;opensearch-mcp-connection&lt;/code&gt;.&lt;/li&gt;
+     &lt;li&gt;Select your virtual private cloud (VPC) and private subnets (one per Availability Zone (AZ)).&lt;/li&gt;
+     &lt;li&gt;Attach a security group that allows inbound TCP 443.&lt;/li&gt;
+     &lt;li&gt;For &lt;strong&gt;Host address&lt;/strong&gt;, enter your NLB DNS name (the Step 1 output), and set TCP port to 443.&lt;/li&gt;
+     &lt;li&gt;For &lt;strong&gt;Certificate public key&lt;/strong&gt;, paste the contents of &lt;code&gt;/tmp/mcp-cert.pem&lt;/code&gt;.&lt;/li&gt;
+    &lt;/ul&gt;&lt;/li&gt;
+  &lt;/ul&gt;&lt;/li&gt;
+ &lt;li&gt;Choose &lt;strong&gt;Create Connection&lt;/strong&gt; and wait for status &lt;strong&gt;Completed&lt;/strong&gt; (~5–10 minutes).&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h3 id="register-the-mcp-server"&gt;2.2 Register the MCP server&lt;/h3&gt;
+&lt;p&gt;Then register the Capability Provider. The fields differ by path:&lt;/p&gt;
+&lt;table border="1px" width="100%" cellpadding="10px"&gt;
+ &lt;tbody&gt;
+  &lt;tr&gt;
+   &lt;td&gt;&lt;strong&gt;Field&lt;/strong&gt;&lt;/td&gt;
+   &lt;td&gt;&lt;strong&gt;Self-managed (ECS)&lt;/strong&gt;&lt;/td&gt;
+   &lt;td&gt;&lt;strong&gt;AgentCore&lt;/strong&gt;&lt;/td&gt;
+   &lt;td&gt;&lt;strong&gt;Built-in (3.3+)&lt;/strong&gt;&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;&lt;strong&gt;Name&lt;/strong&gt;&lt;/td&gt;
+   &lt;td&gt;&lt;code&gt;opensearch-observability&lt;/code&gt;&lt;/td&gt;
+   &lt;td&gt;&lt;code&gt;opensearch-observability&lt;/code&gt;&lt;/td&gt;
+   &lt;td&gt;&lt;code&gt;opensearch-observability&lt;/code&gt;&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;&lt;strong&gt;Endpoint URL&lt;/strong&gt;&lt;/td&gt;
+   &lt;td&gt;&lt;code&gt;https://&amp;lt;nlb-dns&amp;gt;/mcp&lt;/code&gt;&lt;/td&gt;
+   &lt;td&gt;&lt;code&gt;https://&amp;lt;AgentCoreEndpoint&amp;gt;&lt;/code&gt;&lt;/td&gt;
+   &lt;td&gt;&lt;code&gt;https://&amp;lt;domain-endpoint&amp;gt;/_plugins/_ml/mcp&lt;/code&gt;&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;&lt;strong&gt;Private connection&lt;/strong&gt;&lt;/td&gt;
+   &lt;td&gt;&lt;code&gt;opensearch-mcp-connection&lt;/code&gt;&lt;/td&gt;
+   &lt;td&gt;—&lt;/td&gt;
+   &lt;td&gt;—&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;&lt;strong&gt;Authentication&lt;/strong&gt;&lt;/td&gt;
+   &lt;td&gt;API key (&lt;code&gt;x-api-key&lt;/code&gt;)&lt;/td&gt;
+   &lt;td&gt;OAuth&lt;/td&gt;
+   &lt;td&gt;SigV4&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;&lt;strong&gt;OAuth client ID / secret&lt;/strong&gt;&lt;/td&gt;
+   &lt;td&gt;—&lt;/td&gt;
+   &lt;td&gt;from stack outputs&lt;/td&gt;
+   &lt;td&gt;—&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;&lt;strong&gt;SigV4 service&lt;/strong&gt;&lt;/td&gt;
+   &lt;td&gt;—&lt;/td&gt;
+   &lt;td&gt;—&lt;/td&gt;
+   &lt;td&gt;&lt;code&gt;es&lt;/code&gt;&lt;/td&gt;
+  &lt;/tr&gt;
+ &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h3 id="configure-allowed-tools"&gt;2.3 Configure allowed tools&lt;/h3&gt;
+&lt;p&gt;Classify the MCP tools as read-only so the agent can query but not mutate your domain: &lt;code&gt;SearchIndexTool&lt;/code&gt;, &lt;code&gt;ListIndexTool&lt;/code&gt; (and, if present, &lt;code&gt;GetMappingsTool&lt;/code&gt; and &lt;code&gt;GetShardsTool&lt;/code&gt;).&lt;/p&gt;
+&lt;h3 id="verify-the-registration"&gt;2.4 Verify the registration&lt;/h3&gt;
+&lt;p&gt;In the AWS DevOps Agent console test interface, ask:&lt;/p&gt;
+&lt;blockquote&gt;
+ &lt;p&gt;“List the indices in my OpenSearch domain that match &lt;code&gt;application-logs-*&lt;/code&gt;”&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;The agent should invoke the list tool and return your index names. A &lt;code&gt;403 Forbidden&lt;/code&gt; or &lt;code&gt;security_exception&lt;/code&gt; means you haven’t configured the FGAC mapping yet. Continue to Step 3. A connection timeout on the self-managed path points to the private connection status or NLB security group.&lt;/p&gt;
+&lt;h2 id="step-3-configure-fgac-role-mapping"&gt;Step 3: Configure FGAC role mapping&lt;/h2&gt;
+&lt;p&gt;OpenSearch managed domains with FGAC enforce a strict separation: IAM authenticates the caller, but the internal security plugin of OpenSearch authorizes access to the indices. Without an explicit mapping between the IAM role and an OpenSearch backend role, authenticated requests still receive &lt;code&gt;403 Forbidden&lt;/code&gt;.&lt;/p&gt;
+&lt;h3 id="identify-the-role-to-map"&gt;Identify the role to map&lt;/h3&gt;
+&lt;table border="1px" width="100%" cellpadding="10px"&gt;
+ &lt;tbody&gt;
+  &lt;tr&gt;
+   &lt;td&gt;&lt;strong&gt;Path&lt;/strong&gt;&lt;/td&gt;
+   &lt;td&gt;&lt;strong&gt;IAM Role&lt;/strong&gt;&lt;/td&gt;
+   &lt;td&gt;&lt;strong&gt;Where to find it&lt;/strong&gt;&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;Self-managed (ECS)&lt;/td&gt;
+   &lt;td&gt;ECS task role&lt;/td&gt;
+   &lt;td&gt;CDK output &lt;code&gt;McpTaskRoleArn&lt;/code&gt; (from the Step 1 snippet)&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;AgentCore&lt;/td&gt;
+   &lt;td&gt;MCP server role (trust: &lt;code&gt;agentcore.bedrock.amazonaws.com&lt;/code&gt;)&lt;/td&gt;
+   &lt;td&gt;CloudFormation Outputs → &lt;code&gt;McpServerRoleArn&lt;/code&gt;&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;Built-in endpoint&lt;/td&gt;
+   &lt;td&gt;DevOps Agent role (trust: &lt;code&gt;aidevops.amazonaws.com&lt;/code&gt;)&lt;/td&gt;
+   &lt;td&gt;DevOps Agent console → Agent Space → IAM Configuration&lt;/td&gt;
+  &lt;/tr&gt;
+ &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h3 id="apply-the-role-mapping-recommended-scoped-to-your-indices"&gt;Apply the role mapping (recommended: scoped to your indices)&lt;/h3&gt;
+&lt;p&gt;With the role identified, apply the mapping. We recommend that you scope it to your observability indices rather than granting cluster-wide read, so you can control which data the agent can query. The first call creates a read-only role restricted to those indices. The second maps your IAM role to it:&lt;/p&gt;
+&lt;div class="hide-language"&gt;
+ &lt;pre&gt;&lt;code class="language-bash"&gt;# Create a read-only role scoped to your observability indices
+curl -XPUT "https://&amp;lt;domain-endpoint&amp;gt;/_plugins/_security/api/roles/devops_agent_readonly" \
+  --aws-sigv4 "aws:amz:&amp;lt;region&amp;gt;:es" -H "Content-Type: application/json" -d '{
+    "cluster_permissions":["cluster_composite_ops_ro"],
+    "index_permissions":[{"index_patterns":["application-logs-*","otel-traces-*"],
+      "allowed_actions":["read","search"]}] }'
+# Map the IAM role to it
+curl -XPUT "https://&amp;lt;domain-endpoint&amp;gt;/_plugins/_security/api/rolesmapping/devops_agent_readonly" \
+  --aws-sigv4 "aws:amz:&amp;lt;region&amp;gt;:es" -H "Content-Type: application/json" -d '{
+    "backend_roles":["arn:aws:iam::&amp;lt;ACCOUNT_ID&amp;gt;:role/&amp;lt;YourMcpTaskRole-or-DevOpsAgentRole&amp;gt;"] }'&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;Verify:&lt;/p&gt;
+&lt;div class="hide-language"&gt;
+ &lt;pre&gt;&lt;code class="language-bash"&gt;curl -s "https://&amp;lt;domain-endpoint&amp;gt;/_plugins/_security/api/rolesmapping/devops_agent_readonly" \
+  --aws-sigv4 "aws:amz:&amp;lt;region&amp;gt;:es" | jq '.devops_agent_readonly.backend_roles'&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;h2 id="step-4-wire-up-alert-routing"&gt;Step 4: Wire up alert routing&lt;/h2&gt;
+&lt;p&gt;Your OpenSearch Alerting monitors already fire to SNS. The remaining connection is a lightweight Lambda that transforms those SNS notifications into the format the AWS DevOps Agent Event Channel expects, with HMAC signing for payload integrity. This is the piece that closes the loop: investigations trigger automatically, without a human forwarding the alert.&lt;/p&gt;
+&lt;h3 id="the-webhook-forwarder"&gt;4.1 The webhook forwarder&lt;/h3&gt;
+&lt;p&gt;The forwarder performs two operations: payload transformation and HMAC-SHA256 signing.&lt;/p&gt;
+&lt;div class="hide-language"&gt;
+ &lt;pre&gt;&lt;code class="language-python"&gt;# HMAC-SHA256 signing contract. DevOps Agent expects two headers:
+#   x-amzn-event-signature = base64(HMAC-SHA256(secret, f"{timestamp}:{body}"))
+#   x-amzn-event-timestamp = %Y-%m-%dT%H:%M:%S.000Z (UTC)
+# transform_alert() maps the OpenSearch Alerting payload to a DevOps Agent event
+# (severity 1/2-&amp;gt;HIGH, 3-&amp;gt;MEDIUM, 4-&amp;gt;LOW), deriving title/service/incidentId/metadata
+# from monitor_name, trigger_name, and results.&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;The complete implementation adds retry logic (three attempts with exponential backoff at 1, 2, and 4 seconds), AWS Secrets Manager integration for HMAC secret caching, and structured JSON error logging.&lt;/p&gt;
+&lt;h3 id="deploy-the-forwarder"&gt;4.2 Deploy the forwarder&lt;/h3&gt;
+&lt;p&gt;Define the forwarder as a Lambda subscribed to your alerting SNS topic. Package the preceding transformation and signing logic as the handler, wire it up in AWS CDK, and deploy with &lt;code&gt;cdk deploy --require-approval broadening --region &amp;lt;region&amp;gt;&lt;/code&gt;:&lt;/p&gt;
+&lt;div class="hide-language"&gt;
+ &lt;pre&gt;&lt;code class="language-javascript"&gt;// Representative wiring — the forwarder Lambda subscribes to the alerting SNS topic.
+const forwarder = new lambda.Function(this, 'WebhookForwarder', {
+  runtime: lambda.Runtime.PYTHON_3_12, handler: 'forwarder.handler',
+  code: lambda.Code.fromAsset('lambda/webhook-forwarder'), timeout: Duration.seconds(60),
+  environment: { WEBHOOK_URL: props.eventChannelUrl,        // Event Channel URL (below)
+                 WEBHOOK_SECRET_NAME: 'devops-agent-webhook-secret' } });  // HMAC secret
+secret.grantRead(forwarder);
+alertsTopic.addSubscription(new subs.LambdaSubscription(forwarder));&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;h3 id="configure-the-event-channel"&gt;4.3 Configure the Event Channel&lt;/h3&gt;
+&lt;p&gt;With the forwarder deployed, create the webhook in the AWS DevOps Agent console and wire its URL and signing secret back into the Lambda.&lt;/p&gt;
+&lt;ol type="1"&gt;
+ &lt;li&gt;In the AWS DevOps Agent console, go to &lt;strong&gt;Agent Space&lt;/strong&gt;, &lt;strong&gt;Webhooks&lt;/strong&gt;, &lt;strong&gt;Agent Space Webhook&lt;/strong&gt;, and then choose &lt;strong&gt;Add webhook&lt;/strong&gt;.&lt;/li&gt;
+ &lt;li&gt;Complete the setup steps: verify the data schema, configure HMAC authentication, and generate the URL and credentials.&lt;/li&gt;
+ &lt;li&gt;Note the &lt;strong&gt;HMAC signing secret&lt;/strong&gt; and store it in the AWS Secrets Manager secret referenced by the forwarder (&lt;code&gt;devops-agent-webhook-secret&lt;/code&gt;). See &lt;a href="https://docs.aws.amazon.com/secretsmanager/latest/userguide/create_secret.html" target="_blank" rel="noopener"&gt;Create an AWS Secrets Manager secret&lt;/a&gt; in the AWS Secrets Manager User Guide.&lt;/li&gt;
+ &lt;li&gt;Set the generated &lt;strong&gt;Webhook URL&lt;/strong&gt; as the &lt;code&gt;WEBHOOK_URL&lt;/code&gt; environment variable on the forwarder Lambda (the &lt;code&gt;eventChannelUrl&lt;/code&gt; prop in the preceding snippet).&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;&lt;strong&gt;Note: &lt;/strong&gt;Creating an &lt;a href="https://docs.opensearch.org/latest/observing-your-data/alerting/index/" target="_blank" rel="noopener"&gt;OpenSearch Alerting&lt;/a&gt; monitor (if you don’t have one yet).&lt;/p&gt;
+&lt;p&gt;If you don’t have a monitor yet, create an SNS notification channel (Notifications plugin) and a query-level alerting monitor over &lt;code&gt;application-logs-*&lt;/code&gt; that triggers when error_count &amp;gt; 5 and posts to that channel. Full request bodies are in the OpenSearch Alerting docs. The action’s message_template must emit monitor_name, trigger_name, severity, period_start, period_end, and results to match the forwarder’s schema.&lt;/p&gt;
+&lt;p&gt;The IAM role (&lt;code&gt;role_arn&lt;/code&gt;) needs &lt;code&gt;sns:Publish&lt;/code&gt; permission on your topic and a trust policy allowing &lt;code&gt;es.amazonaws.com&lt;/code&gt; to assume it. The &lt;code&gt;destination_id&lt;/code&gt; in the action must match the &lt;code&gt;config_id&lt;/code&gt; from the notification channel.&lt;/p&gt;
+&lt;h3 id="verify-delivery"&gt;4.4 Verify delivery&lt;/h3&gt;
+&lt;p&gt;Publish a test alert to your SNS topic:&lt;/p&gt;
+&lt;div class="hide-language"&gt;
+ &lt;pre&gt;&lt;code class="language-bash"&gt;aws sns publish --topic-arn &amp;lt;AlertSnsTopicArn&amp;gt; \
+  --message '{"monitor_name":"test-connectivity","trigger_name":"manual-test",
+    "severity":"3","period_start":"2026-07-15T10:00:00Z",
+    "period_end":"2026-07-15T10:05:00Z",
+    "results":[{"index":"application-logs-2026.07.15","doc_count":1}]}'&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;Check the forwarder’s CloudWatch Logs for:&lt;/p&gt;
+&lt;div class="hide-language"&gt;
+ &lt;pre&gt;&lt;code class="language-json"&gt;{"level": "INFO", "message": "Delivered successfully", "status_code": 200, "incident_id": "test-connectivity-1783166700"}&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;&lt;strong&gt;Note:&lt;/strong&gt; &lt;code&gt;401 Unauthorized&lt;/code&gt; means the HMAC secret in Secrets Manager doesn’t match the Event Channel secret. &lt;code&gt;Connection refused&lt;/code&gt; means the Event Channel URL is wrong or the Lambda lacks outbound access.&lt;/p&gt;
+&lt;h2 id="step-5-verify-the-closed-loop"&gt;Step 5: Verify the closed loop&lt;/h2&gt;
+&lt;p&gt;With all four components connected (MCP server, Capability Provider, FGAC mapping, and alert routing), trigger a controlled failure to verify the full loop.&lt;/p&gt;
+&lt;h3 id="inject-failure"&gt;5.1 Inject failure&lt;/h3&gt;
+&lt;p&gt;Set reserved concurrency to zero on one of your application’s Lambda functions. This causes all invocations to be throttled:&lt;/p&gt;
+&lt;div class="hide-language"&gt;
+ &lt;pre&gt;&lt;code class="language-bash"&gt;aws lambda put-function-concurrency \
+  --function-name &amp;lt;YourApplicationLambdaFunction&amp;gt; \
+  --reserved-concurrent-executions 0&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;h3 id="generate-traffic"&gt;5.2 Generate traffic&lt;/h3&gt;
+&lt;p&gt;Send requests to trigger errors that will appear in your OpenSearch logs:&lt;/p&gt;
+&lt;div class="hide-language"&gt;
+ &lt;pre&gt;&lt;code class="language-bash"&gt;for i in $(seq 1 20); do
+  curl -s -o /dev/null -w "HTTP %{http_code}\n" \
+    &lt;a href="https://&amp;lt;your-api-endpoint&amp;gt;/orders" rel="noopener noreferrer"&gt;https://&amp;lt;your-api-endpoint&amp;gt;/orders&lt;/a&gt;
+  sleep 2
+done&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;h3 id="expected-timeline"&gt;5.3 Expected timeline&lt;/h3&gt;
+&lt;p&gt;After you inject the failure and generate traffic, events should unfold roughly as follows. Use this timeline to confirm each stage of the loop is firing:&lt;/p&gt;
+&lt;table border="1px" width="100%" cellpadding="10px"&gt;
+ &lt;tbody&gt;
+  &lt;tr&gt;
+   &lt;td&gt;&lt;strong&gt;Elapsed&lt;/strong&gt;&lt;/td&gt;
+   &lt;td&gt;&lt;strong&gt;Event&lt;/strong&gt;&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;T+0s&lt;/td&gt;
+   &lt;td&gt;&lt;code&gt;put-function-concurrency&lt;/code&gt; executed&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;T+30s&lt;/td&gt;
+   &lt;td&gt;Throttle errors appear in &lt;code&gt;application-logs-*&lt;/code&gt; index&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;T+~120s&lt;/td&gt;
+   &lt;td&gt;Alerting monitor evaluates and triggers&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;T+~130s&lt;/td&gt;
+   &lt;td&gt;SNS → Forwarder Lambda → Event Channel delivery&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;T+~135s&lt;/td&gt;
+   &lt;td&gt;DevOps Agent begins investigation&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;T+~300s&lt;/td&gt;
+   &lt;td&gt;Root cause analysis delivered&lt;/td&gt;
+  &lt;/tr&gt;
+ &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h3 id="what-aws-devops-agent-produces"&gt;What AWS DevOps Agent produces&lt;/h3&gt;
+&lt;div class="hide-language"&gt;
+ &lt;pre&gt;&lt;code class="language-text"&gt;ROOT CAUSE ANALYSIS - error-rate-monitor / high-error-rate
+1. OpenSearch logs (SearchIndexTool): 47 ERROR entries, "TooManyRequestsException" on service=OrderProcessor
+2. Traces (SearchIndexTool): matching spans show status.code=429, function never executed
+3. CloudTrail: PutFunctionConcurrency set ReservedConcurrentExecutions=0 two minutes before first error
+4. CloudWatch: Throttles=47, Invocations=0
+ROOT CAUSE: reserved concurrency set to 0 on OrderProcessorFunction, blocking all invocations.
+REMEDIATION: aws lambda delete-function-concurrency --function-name OrderProcessorFunction&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;The agent identified the root cause by querying the same data that triggered the alert, which completes the closed loop.&lt;/p&gt;
+&lt;h3 id="revert-the-failure"&gt;5.4 Revert the failure&lt;/h3&gt;
+&lt;p&gt;After the investigation completes, restore normal capacity by removing the reserved concurrency limit you set earlier:&lt;/p&gt;
+&lt;div class="hide-language"&gt;
+ &lt;pre&gt;&lt;code class="language-bash"&gt;aws lambda delete-function-concurrency \
+  --function-name &amp;lt;YourApplicationLambdaFunction&amp;gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;&lt;strong&gt;Note:&lt;/strong&gt; If the agent doesn’t begin investigation within 3 minutes, check: (1) the forwarder Lambda executed (CloudWatch Logs), (2) the Event Channel shows the received event, and (3) the Capability Provider is registered and healthy.&lt;/p&gt;
+&lt;h2 id="cost-considerations"&gt;Cost considerations&lt;/h2&gt;
+&lt;p&gt;This walkthrough adds roughly $70/month (as of September 2026, and varies by AWS Region and usage): ECS Fargate MCP task approximately $15, network address translation (NAT) gateway approximately $35, NLB approximately $18, Secrets Manager approximately $0.40, and the Lambda forwarder under $1. The AgentCore path removes the NLB and ECS costs but adds AgentCore hosted-endpoint charges. Your existing OpenSearch domain and application aren’t included.&lt;/p&gt;
+&lt;h2 id="security-considerations"&gt;Security considerations&lt;/h2&gt;
+&lt;p&gt;The design keeps everything inside the VPC: OpenSearch and the MCP server run in private subnets with nothing public-facing, and AWS DevOps Agent reaches the MCP server over a VPC Lattice private connection. NLB terminates TLS (OpenSearch enforces HTTPS, TLS 1.2 minimum), and encryption at rest is enabled. IAM is least-privilege: the MCP server’s role maps to a read-only OpenSearch backend role scoped to your observability indices.&lt;/p&gt;
+&lt;p&gt;For production, also consider Security Assertion Markup Language (SAML)/IAM FGAC, request validation in front of the MCP server, and VPC endpoints for Amazon Elastic Container Registry (Amazon ECR), CloudWatch, and Secrets Manager.&lt;/p&gt;
+&lt;h2 id="cleanup"&gt;Cleanup&lt;/h2&gt;
+&lt;div class="hide-language"&gt;
+ &lt;pre&gt;&lt;code class="language-bash"&gt;# Destroy the CDK stacks (MCP server on ECS, webhook forwarder)
+cdk destroy --all --region &amp;lt;region&amp;gt;
+# AgentCore path: delete its CloudFormation stack
+aws cloudformation delete-stack --stack-name opensearch-mcp-agentcore
+# In the DevOps Agent console: remove the Capability Provider and the private connection.
+# Remove the FGAC role mapping
+curl -XDELETE "https://&amp;lt;domain-endpoint&amp;gt;/_plugins/_security/api/rolesmapping/devops_agent_readonly" \
+  --aws-sigv4 "aws:amz:&amp;lt;region&amp;gt;:es"
+# 3.3+ path: disable the built-in endpoint. Delete the imported ACM certificate.&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;&lt;strong&gt;Verify the resources are removed:&lt;/strong&gt; ECS tasks, NLB, NAT Gateway, AgentCore hosted endpoint (if used), and the Secrets Manager secret.&lt;/p&gt;
+&lt;h2 id="conclusion"&gt;Conclusion&lt;/h2&gt;
+&lt;p&gt;You connected AWS DevOps Agent to your OpenSearch observability data through MCP, with three hosting paths so Region availability doesn’t block you: self-managed ECS (everywhere today), AgentCore (low-ops, where available), or the built-in 3.3+ endpoint. The loop is now closed: the same domain that stores your data and fires alerts becomes the investigation source, and the agent can help determine why an alert fired automatically.&lt;/p&gt;
+&lt;p&gt;Start with one alert that fires frequently and costs your team time to investigate manually. Connect it through this pipeline, watch the agent produce its first root cause analysis, and iterate from there.&lt;/p&gt;
+&lt;h3 id="related-resources"&gt;Related resources&lt;/h3&gt;
+&lt;ul&gt;
+ &lt;li&gt;&lt;a href="https://docs.aws.amazon.com/devopsagent/latest/userguide/" target="_blank" rel="noopener"&gt;AWS DevOps Agent documentation&lt;/a&gt;&lt;/li&gt;
+ &lt;li&gt;&lt;a href="https://docs.aws.amazon.com/devopsagent/latest/userguide/configuring-integrations-and-knowledge-connecting-mcp-servers.html" target="_blank" rel="noopener"&gt;Connecting MCP Servers to DevOps Agent&lt;/a&gt;&lt;/li&gt;
+ &lt;li&gt;&lt;a href="https://aws.amazon.com/blogs/devops/securely-connect-aws-devops-agent-to-private-services-in-your-vpcs/" target="_blank" rel="noopener"&gt;Securely connect AWS DevOps Agent to private services in your VPCs&lt;/a&gt;&lt;/li&gt;
+ &lt;li&gt;&lt;a href="https://github.com/opensearch-project/opensearch-mcp-server-py" target="_blank" rel="noopener"&gt;OpenSearch MCP Server (opensearch-mcp-server-py)&lt;/a&gt;&lt;/li&gt;
+ &lt;li&gt;&lt;a href="https://opensearch.org/blog/hosting-opensearch-mcp-server-with-amazon-bedrock-agentcore/" target="_blank" rel="noopener"&gt;Hosting OpenSearch MCP Server with Amazon Bedrock AgentCore&lt;/a&gt;&lt;/li&gt;
+ &lt;li&gt;&lt;a href="https://aws.amazon.com/opensearch-service/" target="_blank" rel="noopener"&gt;Amazon OpenSearch Service&lt;/a&gt;&lt;/li&gt;
+ &lt;li&gt;&lt;a href="https://modelcontextprotocol.io/" target="_blank" rel="noopener"&gt;Model Context Protocol specification&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;hr style="width: 100%"&gt;
+&lt;h2&gt;About the authors&lt;/h2&gt;
+&lt;footer&gt;
+ &lt;div class="blog-author-box" style="padding-top: 2.0em"&gt;
+  &lt;div class="blog-author-image" style="margin-right: 1.0em"&gt;
+   &lt;img loading="lazy" class="alignnone size-full" src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/10/01/24818-1.png" alt="Sitaraman Vijay Krishna" width="100" height="133"&gt;
+  &lt;/div&gt;
+  &lt;h3 class="lb-h4"&gt;Sitaraman Vijay Krishna&lt;/h3&gt;
+  &lt;p style="overflow: hidden"&gt;Sitaraman is a Senior Technical Account Manager at AWS, where he works with customers on Generative AI, Agentic AI, and AI observability, including hands-on adoption of the AWS DevOps Agent. Outside work, he’s a lifelong sports fan who’s as happy on the field as watching from the stands.&lt;/p&gt;
+ &lt;/div&gt;
+ &lt;div class="blog-author-box" style="padding-top: 2.0em"&gt;
+  &lt;div class="blog-author-image" style="margin-right: 1.0em"&gt;
+   &lt;img loading="lazy" class="alignnone size-full" src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/10/01/DEVOPS-24818-6.jpg" alt="Prateek Sethi" width="100" height="133"&gt;
+  &lt;/div&gt;
+  &lt;h3 class="lb-h4"&gt;Prateek Sethi&lt;/h3&gt;
+  &lt;p style="overflow: hidden"&gt;Prateek is a Senior Technical Account Manager who excels in architecting and implementing complex distributed systems, particularly transforming operations for global manufacturing and retail organizations. His passion for customer success drives him to nurture long-term partnerships, guiding organizations through their digital transformation journeys while ensuring optimal outcomes. When not solving technical challenges, Prateek enjoys exploring European cities on his motorcycle.&lt;/p&gt;
+ &lt;/div&gt;
+&lt;/footer&gt;</content:encoded>
+					
+		
+		
+			</item>
+<item>
+		<title>How Mirelo AI brought sound design to the IDE with MCP and Kiro powers</title>
+		<link>https://aws.amazon.com/blogs/devops/how-mirelo-ai-brought-sound-design-to-the-ide-with-mcp-and-kiro-powers/</link>
+		
+		<dc:creator><![CDATA[Florian Breton]]></dc:creator>
+		<pubDate>Thu, 01 Oct 2026 14:49:24 +0000</pubDate>
+				<category><![CDATA[Customer Solutions]]></category>
+		<category><![CDATA[Intermediate (200)]]></category>
+		<category><![CDATA[Kiro]]></category>
+		<guid isPermaLink="false">827aceab34bd4488480ce1cb0a3ee8bef5250aa8</guid>
+
+					<description>Mirelo AI turned its hosted Model Context Protocol (MCP) server into a Kiro power, so developers can generate production-ready sound effects from a natural-language prompt without leaving their IDE. Learn how Mirelo built the integration and how AWS Enterprise Support helped bring it to the Kiro powers marketplace.</description>
+										<content:encoded>&lt;p&gt;Mirelo AI set out to fix how sound design works in the integrated development environment (IDE). For most developers, sound design has always meant leaving the IDE: opening a browser, digging through stock libraries, and trimming and syncing clips by hand. Sound is the last creative layer most developers reach, and the one they most often get wrong without specialist help. For teams building games, apps, and interactive products, digital audio workstations (DAWs) live outside the development workflow, so most ship with placeholder audio or nothing at all.&lt;/p&gt;
+&lt;p&gt;Mirelo AI, a Europe-based generative AI lab, builds models that turn a text prompt or a video clip into production-ready sound effects, synced to the picture when video is provided. Feed a video clip to the model and it returns audio matched to the action on screen. Mirelo built a hosted server on the Model Context Protocol (MCP), the open standard that lets AI assistants discover and call external tools. With Mirelo’s hosted MCP server, developers can reach those models from the tools they already use.&lt;/p&gt;
+&lt;p&gt;In this post, we describe how that MCP server became a power in Kiro, the agentic development environment from AWS. We also cover how Mirelo’s AWS Enterprise Support account team helped bring it to the Kiro powers marketplace. The result: Developers using Kiro can generate sound design from a natural-language prompt without leaving their editor.&lt;/p&gt;
+&lt;h2 id="solution-overview"&gt;Solution overview&lt;/h2&gt;
+&lt;p&gt;With a Kiro power, you get Mirelo’s hosted MCP server bundled with Agent Skills that tell the AI assistant when and how to use it. When a developer’s prompt mentions sound, audio, or effects, Kiro activates the power, connects to Mirelo’s server, and loads its tools into the conversation. The developer describes the sound they want. Kiro calls Mirelo’s models and returns a finished audio file into the project.&lt;/p&gt;
+&lt;p&gt;The design has three parts:&lt;/p&gt;
+&lt;ul&gt;
+ &lt;li&gt;Mirelo’s audio models, exposed through their existing HTTP API.&lt;/li&gt;
+ &lt;li&gt;The hosted MCP server (https://mcp.mirelo.ai/mcp), which wraps that API as callable tools.&lt;/li&gt;
+ &lt;li&gt;The Kiro power, which bundles the MCP configuration with an Agent Skill and publishes it to the marketplace for one-action install.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id="the-problem-sound-is-the-last-mile-of-creative-development"&gt;The problem: Sound is the last mile of creative development&lt;/h2&gt;
+&lt;p&gt;Visual assets have mature tooling inside IDEs and design systems. Audio does not. A game developer prototyping a level generates textures, writes shaders, and tests physics in the editor. But the moment they need a matching footstep sound, the flow breaks. They open a browser, search a stock library, download candidates, trim them to length, and manually sync timing.&lt;/p&gt;
+&lt;p&gt;Content creators working with generative video hit the same wall from the other side. AI models now produce visual content in seconds, but each clip ships silent, so adding sound means switching tools, breaking flow, and spending more time on audio than the video itself took to create.&lt;/p&gt;
+&lt;p&gt;Mirelo’s thesis: Sound generation should live where developers already work, not in a separate application.&lt;/p&gt;
+&lt;h2 id="from-api-to-agent-tool-the-mirelo-mcp-server"&gt;From API to agent tool: The Mirelo MCP server&lt;/h2&gt;
+&lt;p&gt;Mirelo already had an API powering their Studio product. The question was how to make those capabilities reachable inside AI-powered development environments without asking developers to write integration code.&lt;/p&gt;
+&lt;p&gt;MCP answers that. By wrapping their API as an MCP server, Mirelo exposed their full audio generation pipeline to any compatible AI assistant. The Mirelo MCP is hosted and remote: developers add a single URL, authenticate through their browser, and start generating audio from conversation. There’s no local install and no API key to manage.&lt;/p&gt;
+&lt;p&gt;The server covers the full sound design loop:&lt;/p&gt;
+&lt;ul&gt;
+ &lt;li&gt;Generate from text: describe a sound effect in natural language and receive a finished audio file.&lt;/li&gt;
+ &lt;li&gt;Generate from video: pass a video clip and get synced sound effects for every action.&lt;/li&gt;
+ &lt;li&gt;Extend: lengthen an audio clip that is too short for the scene.&lt;/li&gt;
+ &lt;li&gt;Inpaint: replace a selected region of a clip while leaving the rest untouched.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;A preflight tool estimates credits and runtime before generation runs, which matters when an agent works through a batch of files rather than a single effect.&lt;/p&gt;
+&lt;h2 id="comparing-direct-api-access-with-a-kiro-power"&gt;Comparing direct API access with a Kiro power&lt;/h2&gt;
+&lt;p&gt;Without the power, a developer who wants a sound effect works against the API directly. For anything longer than a short clip, that means the asynchronous path: submit the job, get a job ID back, poll for status, then download the result once it completes. A minimal version looks like this:&lt;/p&gt;
+&lt;div class="hide-language"&gt;
+ &lt;pre&gt;&lt;code class="language-bash"&gt;# 1. Submit the job
+# The code samples in this post are provided for demonstration and educational purposes only and
+# are not intended for production use without additional security review and testing. In
+# particular, store API keys in a secrets manager rather than inline, and add error handling and
+# retry limits before deploying.
+JOB=$(curl -s https://api.mirelo.ai/v2/text-to-sfx/v1.6/jobs \
+  --request POST \
+  --header 'Authorization: Bearer sk-&amp;lt;your-api-key&amp;gt;' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "prompt": "Heavy rain on a metal roof with distant thunder",
+    "duration_ms": 45000,
+    "output_format": "mp3"
+  }' | jq -r '.job_id')
+
+# 2. Poll until the job leaves the "processing" state
+while true; do
+  STATUS=$(curl -s "https://api.mirelo.ai/v2/text-to-sfx/v1.6/jobs/$JOB" \
+    --header 'Authorization: Bearer sk-&amp;lt;your-api-key&amp;gt;' | jq -r '.status')
+  [ "$STATUS" = "succeeded" ] &amp;amp;&amp;amp; break
+  [ "$STATUS" = "failed" ] &amp;amp;&amp;amp; echo "generation failed" &amp;amp;&amp;amp; exit 1
+  sleep 3
+done
+
+# 3. Fetch the result URL and download the clip
+curl -s "https://api.mirelo.ai/v2/text-to-sfx/v1.6/jobs/$JOB" \
+  --header 'Authorization: Bearer sk-&amp;lt;your-api-key&amp;gt;' \
+  | jq -r '.result_urls[0]' \
+  | xargs curl -o rain.mp3&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;This works, but the developer owns every step. They store the API key, choose the sync endpoint for short clips and the async endpoint for longer ones, and call preflight to estimate credits. They also run the poll loop with sensible backoff, handle the failure state, download the result, and retry on transient errors. Each surface, whether a web app, a game editor, or a batch script, reimplements the same glue.&lt;/p&gt;
+&lt;p&gt;With the power, the developer describes the sound and the agent assembles that same request. Kiro authenticates through browser sign-in and reads the tool schema Mirelo published. It fills in prompt, duration_ms, and output_format from the conversation, runs the preflight tool when the job is large, and waits on the async job when generation runs long. The developer writes:&lt;/p&gt;
+&lt;blockquote&gt;
+ &lt;p&gt;&lt;em&gt;Generate 45 seconds of heavy rain on a metal roof with distant thunder, as an mp3.&lt;/em&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;The file is added to the project. The underlying API call is the same. What changes is who assembles and operates it.&lt;/p&gt;
+&lt;p&gt;The following table compares the two paths:&lt;/p&gt;
+&lt;table border="1px" width="100%" cellpadding="10px"&gt;
+ &lt;tbody&gt;
+  &lt;tr&gt;
+   &lt;td&gt;&lt;strong&gt;Concern&lt;/strong&gt;&lt;/td&gt;
+   &lt;td&gt;&lt;strong&gt;Direct API&lt;/strong&gt;&lt;/td&gt;
+   &lt;td&gt;&lt;strong&gt;Kiro power/MCP tool call&lt;/strong&gt;&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;Authentication&lt;/td&gt;
+   &lt;td&gt;Store and send Bearer sk-… on every call&lt;/td&gt;
+   &lt;td&gt;Browser sign-in, managed by Kiro&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;Cost check&lt;/td&gt;
+   &lt;td&gt;Call /preflight yourself&lt;/td&gt;
+   &lt;td&gt;Agent calls the preflight tool when the job warrants it&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;Sync compared to async&lt;/td&gt;
+   &lt;td&gt;You choose the endpoint and implement polling&lt;/td&gt;
+   &lt;td&gt;Agent selects based on job size&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;Response handling&lt;/td&gt;
+   &lt;td&gt;Parse result_urls and download&lt;/td&gt;
+   &lt;td&gt;Agent returns the file into the project&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td&gt;Reuse across tools&lt;/td&gt;
+   &lt;td&gt;Reimplement the glue per surface&lt;/td&gt;
+   &lt;td&gt;One power, available in any Kiro session&lt;/td&gt;
+  &lt;/tr&gt;
+ &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h2 id="why-package-it-as-a-kiro-power"&gt;Why package it as a Kiro power&lt;/h2&gt;
+&lt;p&gt;Mirelo’s MCP server already worked in several AI assistants. With a Kiro power, you get discoverability, so you find the integration while browsing the marketplace, and automatic activation, so there is no URL to paste or configuration to write.&lt;/p&gt;
+&lt;p&gt;A power bundles an MCP server with Agent Skills, the structured instructions that guide an AI assistant through a specific workflow. The AI assistant learns what tools exist and when to reach for them. Just as important is how a power loads. A traditional MCP setup registers every tool definition upfront. Connecting a handful of servers can burn tens of thousands of tokens, a large share of the context window, before your first prompt. Kiro powers load dynamically instead. Installed powers sit dormant until your conversation mentions relevant keywords, at which point Kiro activates only that power’s tools and skills and deactivates them when you move on. Skills load the same way, on-demand, so the AI assistant pulls in a specific workflow’s instructions only when it’s working on that task. The result is near-zero baseline context cost and a Mirelo integration that surfaces its sound-design tools exactly when they’re needed, without crowding out the rest of your work.&lt;/p&gt;
+&lt;p&gt;The structure of a power is small. The following layout shows the three files that define it:&lt;/p&gt;
+&lt;div class="hide-language"&gt;
+ &lt;pre&gt;&lt;code class="language-text"&gt;example-power/
+|-- plugin.json          # Manifest: name, keywords, and metadata
+|-- mcp.json             # Remote MCP server configuration
++-- skills/
+    +-- sound-design/
+        +-- SKILL.md     # Guides the agent through audio workflows&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;The &lt;code&gt;plugin.json&lt;/code&gt; manifest declares the keywords that trigger activation. The &lt;code&gt;mcp.json&lt;/code&gt; file points to the provider’s hosted server. The skill teaches the agent the difference between generating a one-shot effect and sound-designing an entire sequence.&lt;/p&gt;
+&lt;h2 id="the-path-from-idea-to-marketplace"&gt;The path from idea to marketplace&lt;/h2&gt;
+&lt;p&gt;The Kiro powers connection came from Mirelo’s AWS Enterprise Support account team. The team spotted the fit between Mirelo’s MCP server and the powers marketplace. They built a proof-of-concept power to show how the integration would work and connected Mirelo with the submission process. Mirelo then packaged their official hosted server as the published power.&lt;/p&gt;
+&lt;p&gt;From the first conversation to a live power took about two weeks, most of it marketplace review. The engineering itself fit into a single afternoon. The impact is easiest to see in the developer’s workflow. Finding a single sound effect that matches the video is slow, manual work. That includes searching a stock library, auditioning candidates, trimming, and syncing. With the power, a single prompt returns a usable, synced clip, replacing a lengthy manual workflow with one step.&lt;/p&gt;
+&lt;h2 id="what-developers-can-do-with-it"&gt;What developers can do with it&lt;/h2&gt;
+&lt;p&gt;After the Mirelo power is active, sound design becomes part of the conversation. A developer polishing a web app might ask:&lt;/p&gt;
+&lt;blockquote&gt;
+ &lt;p&gt;&lt;em&gt;Generate a soft, satisfying click for this submit button. Short, no metallic ring.&lt;/em&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;On a game prototype, the request could be:&lt;/p&gt;
+&lt;blockquote&gt;
+ &lt;p&gt;&lt;em&gt;Here’s my gameplay clip. Generate footstep and impact sounds that match the character’s movement.&lt;/em&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;For a video project that needs a longer bed:&lt;/p&gt;
+&lt;blockquote&gt;
+ &lt;p&gt;&lt;em&gt;Extend this forest ambience to forty-five seconds so it covers the full scene transition.&lt;/em&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;And to fix a single moment:&lt;/p&gt;
+&lt;blockquote&gt;
+ &lt;p&gt;&lt;em&gt;The glass-break sound at 0:03 is too harsh. Inpaint that region with something more subtle, like thin crystal.&lt;/em&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Each request calls Mirelo’s models and returns audio ready to use, without the developer leaving the editor.&lt;/p&gt;
+&lt;h2 id="a-distribution-channel-for-ai-model-companies"&gt;A distribution channel for AI model companies&lt;/h2&gt;
+&lt;p&gt;For Mirelo, the Kiro powers marketplace is a new kind of distribution. API businesses have historically reached developers through documentation sites, SDKs, and marketing. A power puts the capability inside the tool developers already use. Developers reach it by intent rather than by integration work.&lt;/p&gt;
+&lt;p&gt;The model fits AI services that augment creative workflows. Developers don’t plan to use a sound API the way they plan to use a database. They need sound the moment they realize their project is silent. A power meets them at that point of intent.&lt;/p&gt;
+&lt;h2 id="conclusion"&gt;Conclusion&lt;/h2&gt;
+&lt;p&gt;In this post, we described how Mirelo AI turned a hosted MCP server into a Kiro power, and how AWS Enterprise Support helped move it into the marketplace. For developers, sound design is now a prompt away inside Kiro. For AI model companies, the same path turns an existing MCP server into a distribution channel that reaches developers at the point of intent.&lt;/p&gt;
+&lt;p&gt;To get started:&lt;/p&gt;
+&lt;ul&gt;
+ &lt;li&gt;&lt;a href="https://kiro.dev/launch/powers/add?name=mirelo" target="_blank" rel="noopener"&gt;Install the Mirelo power&lt;/a&gt; from the Kiro powers marketplace.&lt;/li&gt;
+ &lt;li&gt;Try &lt;a href="https://mirelo.ai/" target="_blank" rel="noopener"&gt;Mirelo&lt;/a&gt; and connect the hosted MCP server to your AI assistant.&lt;/li&gt;
+ &lt;li&gt;Read the &lt;a href="https://kiro.dev/docs/powers/create/" target="_blank" rel="noopener"&gt;Kiro powers creation guide&lt;/a&gt; to package your own MCP server.&lt;/li&gt;
+ &lt;li&gt;Review the &lt;a href="https://github.com/agentplugins/agent-plugins-spec" target="_blank" rel="noopener"&gt;Agent Plugins specification&lt;/a&gt; to build portable, vendor-neutral plugins.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p style="clear: both"&gt;&lt;/p&gt;
+&lt;hr style="width: 100%"&gt;
+&lt;h2&gt;About the authors&lt;/h2&gt;
+&lt;footer&gt;
+ &lt;div class="blog-author-box" style="padding-top: 2.0em"&gt;
+  &lt;div class="blog-author-image" style="margin-right: 1.0em"&gt;
+   &lt;img loading="lazy" class="alignnone size-full" src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/28/DEVOPS-24804-1.jpg" alt="Florian Breton" width="100" height="133"&gt;
+  &lt;/div&gt;
+  &lt;h3 class="lb-h4"&gt;Florian Breton&lt;/h3&gt;
+  &lt;p style="overflow: hidden"&gt;Florian is a Technical Account Manager (TAM) at AWS Enterprise Support based in EMEA, where he helps generative AI startups run and scale their workloads on AWS. Outside of direct customer work, he builds internal AWS tooling and contributes to open source projects that improve the AWS customer experience.&lt;/p&gt;
+ &lt;/div&gt;
+ &lt;div class="blog-author-box" style="padding-top: 2.0em"&gt;
+  &lt;div class="blog-author-image" style="margin-right: 1.0em"&gt;
+   &lt;img loading="lazy" class="alignnone size-full" src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/28/DEVOPS-24804-2.jpg" alt="David Kernert" width="100" height="133"&gt;
+  &lt;/div&gt;
+  &lt;h3 class="lb-h4"&gt;David Kernert&lt;/h3&gt;
+  &lt;p style="overflow: hidden"&gt;David is a former engineer at AWS, now working at Mirelo AI to scale the training and serving infrastructure behind Mirelo’s generative audio models.&lt;/p&gt;
+ &lt;/div&gt;
+ &lt;div class="blog-author-box" style="padding-top: 2.0em"&gt;
+  &lt;div class="blog-author-image" style="margin-right: 1.0em"&gt;
+   &lt;img loading="lazy" class="alignnone size-full" src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/28/DEVOPS-24804-3.jpg" alt="Tofig Hasanov" width="100" height="133"&gt;
+  &lt;/div&gt;
+  &lt;h3 class="lb-h4"&gt;Tofig Hasanov&lt;/h3&gt;
+  &lt;p style="overflow: hidden"&gt;Tofig is former Amazon software engineer, now working at Mirelo AI where he is working on building user facing products that expose Mirelo model capabilities, including the MCP.&lt;/p&gt;
+ &lt;/div&gt;
+&lt;/footer&gt;</content:encoded>
+					
+		
+		
+			</item>
+<item>
+		<title>Running production experiments with AWS AppConfig experimentation</title>
+		<link>https://aws.amazon.com/blogs/devops/running-production-experiments-with-aws-appconfig-experimentation/</link>
+		
+		<dc:creator><![CDATA[Aparna Krishnamoorthy]]></dc:creator>
+		<pubDate>Wed, 30 Sep 2026 19:45:35 +0000</pubDate>
+				<category><![CDATA[AWS Systems Manager]]></category>
+		<category><![CDATA[DevOps]]></category>
+		<category><![CDATA[Technical How-to]]></category>
+		<category><![CDATA[Developer Tools]]></category>
+		<category><![CDATA[Testing]]></category>
+		<guid isPermaLink="false">ed59dc9dd34c1f878d9e75a497cf5da4572378db</guid>
+
+					<description>A redesigned checkout button is meant to lift sales. A longer cache time to live (TTL) is meant to cut backend load. But until you test a change against real production traffic, decisions come down to intuition and whoever argues hardest, not evidence. With AWS AppConfig experimentation, you can make data-driven calls instead: using A/B […]</description>
+										<content:encoded>&lt;p&gt;A redesigned checkout button is meant to lift sales. A longer cache time to live (TTL) is meant to cut backend load. But until you test a change against real production traffic, decisions come down to intuition and whoever argues hardest, not evidence. With AWS AppConfig experimentation, you can make data-driven calls instead: using A/B testing, you expose a change to a slice of real users, measure what happens, and let the results decide. It’s part of AWS AppConfig, a capability of AWS Systems Manager, so there’s no separate platform to stand up.&lt;/p&gt;
+&lt;p&gt;Testing in a development environment confirms a change works, but not how real users or production workloads respond. Releasing to everyone at once answers that but exposes every user to any negative effects, such as broken checkout flows or degraded performance. An experiment is the middle ground: real production traffic, but only a controlled slice of it.
+ &lt;br&gt;
+ AWS AppConfig experimentation builds on AWS AppConfig feature flags: you define a hypothesis and eligible audience, and a feature flag assigns each participant to the control or a treatment. The AWS AppConfig Agent delivers the right value to each participant, and you keep full control of your data, you join treatment-assignment records with your existing analytics platform.&lt;/p&gt;
+&lt;p&gt;In this post, you build the following experiments:&lt;/p&gt;
+&lt;ul&gt;
+ &lt;li&gt;A frontend experiment that tests a redesigned &lt;strong&gt;Add to cart&lt;/strong&gt; button&lt;/li&gt;
+ &lt;li&gt;A backend experiment that compares cache TTL settings in a service running on Amazon Elastic Container Service (Amazon ECS)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;You also learn how to record treatment assignments, monitor application health, analyze the results, and promote the winning treatment.&lt;/p&gt;
+&lt;h2&gt;Prerequisites&lt;/h2&gt;
+&lt;p&gt;This post assumes you’ve completed the &lt;a href="https://docs.aws.amazon.com/appconfig/latest/userguide/appconfig-experimentation-creating-prerequisites.html"&gt;experimentation prerequisites in the AWS AppConfig User Guide&lt;/a&gt;: a feature flag deployed to your environment, the AWS AppConfig Agent installed and configured in your compute environment (including the IAM permissions it needs), and experiment assignment logging enabled on the Agent. To follow the examples here, you also need:&lt;/p&gt;
+&lt;p&gt;1. AWS Command Line Interface (AWS CLI) 2.35.12 or later, configured with credentials for the account and Region you use. Verify your version with &lt;strong&gt;aws –version&lt;/strong&gt;.
+ &lt;br&gt;
+ 2. A data warehouse or analytics destination for assignment and outcomes data. This post uses Amazon Athena over data in Amazon S3, but AWS AppConfig experimentation works with Amazon CloudWatch or any warehouse you already use, such as Amazon Redshift or Snowflake.&lt;/p&gt;
+&lt;h2&gt;Architecture Overview&lt;/h2&gt;
+&lt;p&gt;AWS AppConfig experimentation adds A/B testing on top of the AWS AppConfig workflow you already use. The control plane lives in AWS AppConfig, treatments are delivered at the edge by the AWS AppConfig Agent, and analysis stays in your existing data warehouse. AWS AppConfig itself provides real-time aggregate traffic metrics; it doesn’t own results analytics, which keeps your metric definitions and data under your control.&lt;/p&gt;
+&lt;p&gt;The flow looks like this:&lt;/p&gt;
+&lt;p&gt;&lt;img loading="lazy" class="alignnone size-full wp-image-27314" src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/app-config-blog.drawio.png" alt="AppConfig Experimentation Architecture" width="1202" height="732"&gt;&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;Figure 1: AWS AppConfig experimentation — the control plane in AWS AppConfig plus three runtime responsibilities (delivery, measurement, and safety), with the Agent’s assignment log reaching Amazon S3 through Amazon CloudWatch Logs and Amazon Data Firehose&amp;nbsp;&lt;/em&gt;&lt;/p&gt;
+&lt;p&gt;Beyond the control plane in AWS AppConfig, where you define the experiment and its treatments, three things happen at runtime:&lt;/p&gt;
+&lt;ul&gt;
+ &lt;li&gt;&lt;strong&gt;Delivery (the data plane)&lt;/strong&gt;. The AWS AppConfig Agent retrieves the feature flag configuration from AWS AppConfig, caches it locally, and asynchronously polls for updates. Your application asks the agent for a flag over the local HTTP endpoint (&lt;code&gt;http://localhost:2772/...&lt;/code&gt;), passing an entity Id and any relevant request context. The agent returns the assigned treatment. The Agent returns the same treatment for the same entity for the life of the run, so a user or instance never flips treatments mid-experiment.&lt;/li&gt;
+ &lt;li&gt;&lt;strong&gt;Measurement.&lt;/strong&gt; Two data sets meet here. The first is treatment assignments. The Agent writes one JSON record per assignment to standard error. Your log driver ships that record to Amazon CloudWatch Logs, and a subscription filter (matched on the record type) forwards it through Amazon Data Firehose into Amazon S3. The second is your metric events — conversions, latency, cost, and errors — which keep flowing through whatever pipeline you already run.
+  &lt;br&gt;
+  &lt;em&gt;Note: We recommend not using sensitive information such as personally identifiable information (PII) for the entity ID, the Agent logs it verbatim. If you must, hash or pseudonymize it identically in both your assignment and metric data – the entity ID is the key that joins the two. &lt;/em&gt;&lt;/li&gt;
+ &lt;li&gt;&lt;strong&gt;Safety.&lt;/strong&gt; Amazon CloudWatch alarms watch operational and experiment metrics. If an alarm fires during a run, you stop the run, which ends exposure and returns users to the deployed configuration.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;One mechanism serves a frontend team, an AI team, and a backend team, each keeping its own metrics and tooling.&lt;/p&gt;
+&lt;h2&gt;Example 1 — Frontend UI Experiment&lt;/h2&gt;
+&lt;p&gt;&lt;strong&gt;Scenario&lt;/strong&gt;. Your team believes a redesigned “Add to cart” button will lift conversion, but you only have a hypothesis. You want to expose it to a slice of production traffic and measure real behavior.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Create the experiment (console)&amp;nbsp;&lt;/strong&gt;
+ &lt;br&gt;
+ The experiment definition ties an application, environment, configuration profile, and feature flag to a control and one or more treatments. Audience rules determine who is eligible, and launch criteria define what counts as success. In the AWS AppConfig console, choose Experiments, then Create experiment, and work through five steps. AI-assisted experiment design in the console can validate your setup against Amazon’s experimentation best practices, helping you catch design gaps before you start a run.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Step 1 — Document your hypothesis.&lt;/strong&gt; Give the experiment a descriptive Experiment name (add-to-cart-redesign), state the Experiment hypothesis, and use Launch criteria to record the evidence required before you promote a winner — a minimum sample per treatment, the lift you’re looking for, and the guardrails that must not regress. Writing it down now is what makes the result interpretable weeks later, and Validate my hypothesis and launch criteria will review both before you continue. Select StoreFront as the Application name.&lt;/p&gt;
+&lt;p&gt;&lt;img loading="lazy" class="alignnone size-full wp-image-27313" src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/Screenshot-2026-09-25-at-00.23.50.png" alt="" width="2804" height="1276"&gt;&lt;em&gt;Figure 2: Documenting the hypothesis and launch criteria for the add-to-cart experiment
+  &lt;br&gt; &lt;/em&gt;
+ &lt;br&gt;
+ &lt;strong&gt;Step 2 — Specify target audience.&lt;/strong&gt; Describe the audience, then build the rule. The Rule builder tab composes conditions from an attribute, an operator, and a value: $platform equals “web”, joined with And to $geo in [“USA”,”CAN”]. Sample blueprints offers pre-built rules to start from, and the Editor tab shows the same rule as an expression — the form to use if you later automate this:
+ &lt;br&gt;
+ &lt;code&gt;(and&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; (eq $platform "web")&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; (in $geo ["USA","CAN"])&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;)&amp;nbsp;&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img loading="lazy" class="alignnone size-full wp-image-27312" src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/Screenshot-2026-09-25-at-00.26.50.png" alt="" width="2954" height="1244"&gt;
+ &lt;br&gt;
+ &lt;em&gt;Figure 3: Building the audience rule from two conditions&amp;nbsp;&lt;/em&gt;&lt;/p&gt;
+&lt;p&gt;That notation is an S-expression — a prefix, function-style form, (operator arg1 arg2 …). The notation is generic; AppConfig defines the operators and the $-prefixed attribute references, which are populated from the caller context your application sends. Here $geo is an attribute your application supplies — the visitor’s country, not an AWS Region.
+ &lt;br&gt;
+ Note: AWS AppConfig is Regional, so an experiment lives in one AWS Region — don’t use AWS Region as an audience attribute. Segment on caller properties (geography, platform, plan tier, app version); to test across Regions, replicate the experiment definition in each and measure independently.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Step 3 — Select experiment feature flag.&lt;/strong&gt; Choose the Environment (prod), the Configuration profile holding the flag (Features), and the Feature flag itself (add_to_cart_button). The list shows flags already deployed to that environment.
+ &lt;br&gt;
+ &lt;img loading="lazy" class="alignnone size-full wp-image-27310" src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/Screenshot-2026-09-25-at-00.31.15.png" alt="" width="3014" height="1158"&gt;&lt;em&gt;Figure 4: Selecting the deployed feature flag the experiment will control
+  &lt;br&gt; &lt;/em&gt;
+ &lt;br&gt;
+ &lt;strong&gt;Step 4 — Add treatments.&lt;/strong&gt; Describe the Control as your known-good baseline, confirm its Flag value is toggled ON, and under Attribute values set button_style to classic and button_color to &lt;strong&gt;#232F3E&lt;/strong&gt;. The list includes every attribute the flag defines, including ones this experiment doesn’t vary.
+ &lt;br&gt;
+ &lt;img loading="lazy" class="alignnone size-full wp-image-27309" src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/Screenshot-2026-09-25-at-00.32.45.png" alt="" width="2768" height="1264"&gt;&lt;em&gt;Figure 5: The control treatment, serving the current button&amp;nbsp;&lt;/em&gt;&lt;/p&gt;
+&lt;p&gt;Then describe Treatment 1 the same way, setting button_style to &lt;strong&gt;prominent&lt;/strong&gt; and button_color to &lt;strong&gt;#FF9900.&lt;/strong&gt; Keep each treatment to a single change so the result stays interpretable. AppConfig allocates traffic evenly across treatments automatically — an even 50/50 here, which is also what maximizes statistical power. Advanced settings offers custom weights, but the even split is the recommended default.&lt;/p&gt;
+&lt;p&gt;&lt;img loading="lazy" class="alignnone size-full wp-image-27308" src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/Screenshot-2026-09-25-at-00.34.23.png" alt="" width="2478" height="1326"&gt;&lt;em&gt;Figure 6: The treatment variant and the even traffic split&amp;nbsp;&lt;/em&gt;&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Step 5 — Review and complete.&lt;/strong&gt; Check the summary and save. Users who aren’t assigned to the experiment continue to receive the default flag value deployed to their environment; only users in the control or a treatment are measured. AppConfig generates a treatment key for each treatment rather than deriving it from your description — it’s the value the Agent returns as _variant — and you use these keys later in treatment overrides and analysis queries.&lt;/p&gt;
+&lt;p&gt;&lt;img loading="lazy" class="alignnone size-full wp-image-27307" src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/Screenshot-2026-09-25-at-00.36.24.png" alt="" width="2162" height="1370"&gt;&lt;em&gt;Figure 7: The saved experiment definition, ready to start a run
+  &lt;br&gt; &lt;/em&gt;&lt;strong&gt;
+  &lt;br&gt; Retrieve the treatment (Node.js)&amp;nbsp;
+ &lt;/strong&gt;
+ &lt;br&gt;
+ Your web tier asks the local AWS AppConfig Agent for the flag, passing the visitor identity as Entity-Id so the same visitor always gets the same experience, plus any context the audience rule needs. Request the flag by name with the &lt;code&gt;flag&lt;/code&gt; parameter – if you request the whole configuration without it, no experiment assignment is recorded.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;// Node.js 18 or later: fetch and Headers are globals, no imports needed.&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;const AGENT = "http://localhost:2772";&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;const PATH =&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; "/applications/StoreFront/environments/prod/configurations/Features";&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;export async function getButtonTreatment(visitorId, geo) {&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; // Multiple context values are sent as repeated "Context" headers,&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; // so use a Headers object with append (an object literal would drop&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; // all but the last "Context" entry).&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; const headers = new Headers();&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; headers.set("Entity-Id", visitorId); // consistent assignment for the run&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; headers.append("Context", "platform=web");&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; headers.append("Context", `geo=${geo}`);&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; const res = await fetch(`${AGENT}${PATH}?flag=add_to_cart_button`, {&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp; headers,&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; });&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; // The request names a single flag, so the agent returns that flag’s&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; // object directly — there is no wrapper keyed by flag name:&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; // { "_variant": "__t1__", "enabled": true,&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; //&amp;nbsp;&amp;nbsp; "button_style": "prominent", "button_color": "#FF9900" }&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; return await res.json();&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;}&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Capture treatment assignments (AWS AppConfig Agent)&amp;nbsp;&lt;/strong&gt;
+ &lt;br&gt;
+ The Agent logs each assignment for you – you don’t write the exposure-logging code. With &lt;code&gt;EXPERIMENT_ASSIGNMENT_LOG_DESTINATION&lt;/code&gt; set to &lt;code&gt;stderr&lt;/code&gt;, the Agent emits an assignment record the first time it assigns a visitor to a treatment, and that record’s timestamp is what makes clean post-exposure attribution possible later (see the Analyzing experiment results section). Your application’s job is narrower: keep producing the outcome data you already produce — add-to-cart clicks, checkouts, orders. The one thing to get right is the join key:as the Entity-Id, pass an identifier your outcomes dataset already carries — a customer ID, account ID, or session ID — so the records join with no change on your side.&lt;/p&gt;
+&lt;p&gt;#&lt;code&gt; Amazon ECS, Amazon EKS, or Amazon EC2 - set this on the agent container&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;# or host. To collect the files yourself, use a base directory instead of&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;# "stderr", in the form file:/tmp/aws-appconfig/assignments/&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;EXPERIMENT_ASSIGNMENT_LOG_DESTINATION=stderr&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;# AWS Lambda - set this on the function. The extension reads the same&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;# setting under a prefixed name.&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;AWS_APPCONFIG_EXTENSION_EXPERIMENT_ASSIGNMENT_LOG_DESTINATION=stderr&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;# One record per assignment. Shown formatted for readability; the agent&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;# writes it on a single line so log shippers treat it as one event.&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;{&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; "type": "AWS.AppConfig.TreatmentAssignment",&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; "timestamp": "2026-07-29T16:27:55Z",&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; "region": "us-east-1",&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; "accountId": "111122223333",&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; "applicationId": "dn32rvt",&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; "experimentDefinitionId": "uioedbc",&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; "experimentRunNumber": "5",&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; "treatmentKey": "__t1__",&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; "entityId": "visitor-8f2c"&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;}&amp;nbsp;&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;Note: The Agent’s ordinary application logs go to the same place as the assignment records, so your forwarder must match on type. Forward everything and you also forward application logs alongside the assignments and break the schema downstream.&amp;nbsp;&lt;/em&gt;&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Getting the assignment log from STDERR into Amazon S3&amp;nbsp;&lt;/strong&gt;
+ &lt;br&gt;
+ Three hops take you from the Agent’s standard error to something you can query. The runtime ships STDERR to Amazon CloudWatch Logs, which AWS Lambda and Amazon ECS do for you. A subscription filter forwards only the assignment records. Amazon Data Firehose writes them to Amazon S3. The first hop needs no work, so these two commands are the whole pipeline for the frontend example:&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;# 1. Firehose stream that lands assignment records in Amazon S3.&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;#&amp;nbsp;&amp;nbsp;&amp;nbsp; The three processors are the step people miss - see the note below.&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;aws firehose create-delivery-stream \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --delivery-stream-name experiment-assignments \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --delivery-stream-type DirectPut \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --extended-s3-destination-configuration '{&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp; "RoleARN":&amp;nbsp;&amp;nbsp; "arn:aws:iam::111122223333:role/FirehoseToS3",&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp; "BucketARN": "arn:aws:s3:::my-experiment-data",&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp; "Prefix":&amp;nbsp;&amp;nbsp;&amp;nbsp; "assignments/",&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp; "ProcessingConfiguration": {&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; "Enabled": true,&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; "Processors": [&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; {"Type": "Decompression",&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; "Parameters": [{"ParameterName": "CompressionFormat",&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; "ParameterValue": "GZIP"}]},&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; {"Type": "CloudWatchLogProcessing",&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; "Parameters": [{"ParameterName": "DataMessageExtraction",&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; "ParameterValue": "true"}]},&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; {"Type": "AppendDelimiterToRecord"}&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; ]&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp; }&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; }'&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;# 2. Forward only assignment records from the agent’s log group to that stream.&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;aws logs put-subscription-filter \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --log-group-name "/ecs/storefront" \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --filter-name "appconfig-treatment-assignments" \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --filter-pattern '{ $.type = "AWS.AppConfig.TreatmentAssignment" }' \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --destination-arn \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp; "arn:aws:firehose:us-east-1:111122223333:deliverystream/experiment-assignments" \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --role-arn "arn:aws:iam::111122223333:role/CWLtoFirehose"&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;strong&gt;&amp;nbsp;&lt;/strong&gt;
+ &lt;br&gt;
+ &lt;strong&gt;Why the processors matter.&lt;/strong&gt; CloudWatch Logs doesn’t forward events one at a time — it batches them, gzips each batch, and wraps it in an envelope. With no processing configured, your S3 objects hold compressed JSON, with each assignment record buried as an escaped string inside logEvents[].message.&lt;/p&gt;
+&lt;p&gt;Three built-in processors undo that. &lt;code&gt;Decompression&lt;/code&gt; unzips the batch, &lt;code&gt;CloudWatchLogProcessing&lt;/code&gt; with &lt;code&gt;DataMessageExtraction&lt;/code&gt; discards the envelope and keeps only the message contents, and &lt;code&gt;AppendDelimiterToRecord&lt;/code&gt; puts a newline between records so each lands on its own line. What arrives in Amazon S3 is then exactly the JSON the Agent emitted, one record per row. Leave Firehose compression off, because CloudWatch Logs has already gzipped the payload on the way in. To store Parquet, turn on Firehose data format conversion — it needs decompression enabled too.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Check it before you ramp.&lt;/strong&gt; Treatment-assignment overrides produce no assignment records (overridden entities would pollute your results), so the 0% window can’t exercise this pipeline. Ramp to a small exposure instead, 1% is sufficient, let real assignments flow, and confirm a record lands under &lt;code&gt;s3://my-experiment-data/assignments/&lt;/code&gt;. If the object is gzipped or the record is nested under &lt;code&gt;logEvents&lt;/code&gt;, the processors are not configured correctly, and the analysis query later in this post will return nothing. Fix that before you ramp any further.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Amazon ECS without CloudWatch Logs.&lt;/strong&gt; You can also skip the middle hop entirely. Run FireLens with Fluent Bit as the task’s log router, filter on the same &lt;code&gt;type&lt;/code&gt; field, and write straight to Amazon S3. That is fewer moving parts and no envelope to unwrap, in exchange for owning the Fluent Bit configuration yourself.&lt;/p&gt;
+&lt;p&gt;Either route ends the same way: point an AWS Glue table at the S3 prefix, using the fields from the sample record above. That table is the &lt;code&gt;treatment_assignments&lt;/code&gt; source the query in &lt;code&gt;Analyzing experiment results reads&lt;/code&gt;, and joining it to your business data is then an ordinary SQL join on the identifier both sides already share. One naming detail to watch when you write that table definition: timestamp is a reserved word in Athena DDL, so the column has to be backtick-quoted there. Queries against the table need no quoting.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;The same setup works for AI experiments.&lt;/strong&gt; Prompt text is configuration rather than code, so a system prompt and its model parameters can live in flag attributes and be varied exactly like the button styling above — no redeploy to reword a prompt. Key the assignment on a session ID so a single conversation doesn’t switch prompts mid-thread, and treat token cost and latency as first-class guardrails, since a “better” prompt that quietly doubles spend isn’t a win.&lt;/p&gt;
+&lt;h2&gt;Example 2 — Backend Cache TTL Experiment&lt;/h2&gt;
+&lt;p&gt;&lt;strong&gt;Scenario.&lt;/strong&gt; You suspect a longer cache TTL will cut database load without noticeably hurting freshness. This is a backend experiment, so the natural unit of assignment isn’t a user — it’s the service instance. &lt;code&gt;Entity-Id&lt;/code&gt; set to the instance/task ID gives you stable, instance-level segmentation.&lt;/p&gt;
+&lt;p&gt;Example 1 used the console, which is the quickest way to get a first experiment running. This example uses the AWS CLI — the same definition expressed as JSON, which is what you’d reach for to script experiment creation or keep it in source control.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Create the experiment (CLI, instance-level segmentation)&amp;nbsp;&lt;/strong&gt;
+ &lt;br&gt;
+ &lt;code&gt;aws appconfig create-experiment-definition \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --application-identifier "Catalog" \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --environment-identifier "prod" \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --configuration-profile-identifier "Features" \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --flag-key "cache_config" \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --name "cache-ttl-tuning" \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --hypothesis "A longer cache TTL reduces DB load without hurting freshness" \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --audience-rule '(eq $service "product-catalog")' \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --control file://control.json \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --treatments file://cache-treatments.json&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;strong&gt;Define the variations (JSON)&amp;nbsp;&lt;/strong&gt;
+ &lt;br&gt;
+ The control and each treatment are TreatmentInput objects: a FlagValue (the flag’s Enabled state plus its AttributeValues) and a Weight that sets traffic allocation. Where the console offered a plain Value field, the API takes a typed object — NumberValue for a number, StringValue for a string.
+ &lt;br&gt;
+ control.json:
+ &lt;br&gt;
+ &lt;code&gt;{&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; "Description": "Current 60s cache TTL (baseline)",&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; "Weight": 50.0,&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; "FlagValue": { "Enabled": true, "AttributeValues": { "ttl_seconds": { "NumberValue": 60 } } }&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;}&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ cache-treatments.json:
+ &lt;br&gt;
+ &lt;code&gt;[&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; {&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp; "Description": "Increase cache TTL to 300s to reduce DB load",&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp; "Weight": 50.0,&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp; "FlagValue": { "Enabled": true, "AttributeValues": { "ttl_seconds": { "NumberValue": 300 } } }&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; }&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;]&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;em&gt;Type numeric flag attributes deliberately. Define ttl_seconds as a number attribute on the feature flag with minimum and maximum constraints, and express it in whole seconds. AWS AppConfig validates attribute values when you save the configuration profile, so an out-of-range TTL fails there rather than in production.
+  &lt;br&gt; &lt;/em&gt;
+ &lt;br&gt;
+ &lt;strong&gt;Apply in an Amazon ECS service (Java / Spring Boot)&amp;nbsp;&lt;/strong&gt;
+ &lt;br&gt;
+ The AWS AppConfig Agent runs as a sidecar container in the same Amazon ECS task and is reachable at &lt;code&gt;localhost:2772&lt;/code&gt;. Use the Amazon ECS task ID as the &lt;code&gt;Entity-Id&lt;/code&gt; so each instance holds a consistent treatment for the whole run.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;@Component&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;public class CacheConfigProvider {&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp; private static final String AGENT_URL =&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; "http://localhost:2772/applications/Catalog/environments/prod"&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; + "/configurations/Features?flag=cache_config";&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp; private final HttpClient http = HttpClient.newHttpClient();&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp; private final String entityId = resolveTaskId(); // instance-level unit&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp; public CacheConfig getCacheConfig() throws Exception {&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; HttpRequest request = HttpRequest.newBuilder()&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; .uri(URI.create(AGENT_URL))&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; .header("Entity-Id", entityId)&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; .header("Context", "service=product-catalog")&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; .GET()&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; .build();&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; HttpResponse&amp;lt;String&amp;gt; response =&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; http.send(request, HttpResponse.BodyHandlers.ofString());&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; // single-flag request: no wrapper keyed by flag name&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; JsonNode flag = new ObjectMapper().readTree(response.body());&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; String treatment = flag.get("_variant").asText();&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; int ttl = flag.get("ttl_seconds").asInt();&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; emitMetrics(entityId, treatment); // the agent logs the assignment&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; return new CacheConfig(ttl, treatment);&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp; }&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp; private String resolveTaskId() {&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; // ECS injects ECS_CONTAINER_METADATA_URI_V4. A GET on&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; // $ECS_CONTAINER_METADATA_URI_V4/task returns the task metadata,&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; // whose TaskARN ends with the task ID.&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; try {&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; String metadataUri = System.getenv("ECS_CONTAINER_METADATA_URI_V4");&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; HttpRequest metadata = HttpRequest.newBuilder()&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; .uri(URI.create(metadataUri + "/task"))&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; .GET()&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; .build();&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; String body =&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; http.send(metadata, HttpResponse.BodyHandlers.ofString()).body();&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; String taskArn =&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; new ObjectMapper().readTree(body).get("TaskARN").asText();&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; return taskArn.substring(taskArn.lastIndexOf('/') + 1);&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; } catch (Exception e) {&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; // Fail fast. A hard-coded fallback would hand every task the same&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; // Entity-Id, put the whole fleet in one treatment, and quietly&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; // invalidate the experiment.&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; throw new IllegalStateException("Could not resolve the ECS task ID", e);&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; }&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp; }&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;}&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ Your service then emits its guardrail metrics tagged with the same entity_id, so you can compare the 60s and 300s TTL directly.&lt;/p&gt;
+&lt;h2&gt;Configuring Safety Guardrails&lt;/h2&gt;
+&lt;p&gt;An experiment is a production change, so treat it like one: define what “bad” looks like before you ramp. Two controls limit the damage: gradual exposure keeps the exposure small, and Amazon CloudWatch alarms that tell you when to stop the run.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Start safe, ramp gradually.&lt;/strong&gt; Start every run at 0% audience exposure. At 0%, no traffic is assigned unless you add treatment-assignment overrides — specific entity IDs pinned to a treatment. Use that window to validate the treatment before any real users are exposed: confirm the flag renders the expected experience for each treatment (including the control), confirm your outcome metric logging works, and share the overrides with stakeholders for a preview. For the full validation checklist, see &lt;a href="https://docs.aws.amazon.com/appconfig/latest/userguide/appconfig-experimentation-about-running-an-experiment.html"&gt;About running and monitoring an experiment.&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;One thing that window can’t cover: overrides produce no assignment records, so the assignment log pipeline is only exercised once real traffic is being assigned. Clear the overrides, increase exposure in small steps, and treat that first step as the point to confirm assignment records are landing in your warehouse before you ramp further. Watch metrics at each level so a regression hits a small blast radius, not your full audience. Treat overrides as a validation tool, not audience targeting — leave production segmentation to the audience rule.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;# Start the run at 0% exposure to validate before exposing any production users.&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;# Billing for the run begins with this call and continues until the run is stopped.&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;# The overrides pin named entities to a treatment so you can exercise the&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;# application path. Overridden entities are deliberately left out of the&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;# assignment log, so this window cannot validate that pipeline.&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;aws appconfig start-experiment-run \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --application-identifier "StoreFront" \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --experiment-definition-identifier "add-to-cart-redesign" \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --exposure-percentage 0 \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --treatment-overrides '[{"TreatmentKey": "__t1__",&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; "EntityIds": ["qa-jane", "qa-raj"]},&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; {"TreatmentKey": "__control__",&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; "EntityIds": ["qa-sam"]}]'&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;strong&gt;Define rollback triggers with Amazon CloudWatch alarms.&lt;/strong&gt; Before you start a run, decide which metrics indicate unacceptable behavior and create Amazon CloudWatch alarms to watch them. Monitor those alarms throughout the run. If an alarm fires:&lt;/p&gt;
+&lt;ul&gt;
+ &lt;li&gt;Evaluate the impact and scope of the regression.&lt;/li&gt;
+ &lt;li&gt;Stop the experiment run — this ends audience exposure immediately and returns users to the currently deployed feature flag configuration.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Note that after you increase exposure, it cannot be decreased within the same run. This is intentional to prevent data corruption. To reduce exposure, stop the run and start a new one at a lower percentage.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;# Example: alarm on elevated 5xx error rate to watch during the experiment.&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;# The dimension is not optional: without it the alarm watches a metric that&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;# never receives data, so it sits in INSUFFICIENT_DATA instead of firing.&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;aws cloudwatch put-metric-alarm \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --alarm-name "exp-add-to-cart-5xx" \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --namespace "AWS/ApplicationELB" \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --metric-name "HTTPCode_Target_5XX_Count" \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --statistic Sum \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --period 60 \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --evaluation-periods 3 \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --threshold 50 \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --comparison-operator GreaterThanThreshold \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --dimensions Name=LoadBalancer,Value=app/storefront-alb/50dc6c495c0c9188 \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --treat-missing-data notBreaching&amp;nbsp;&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;A note on automatic rollback.&lt;/strong&gt; AWS AppConfig environment monitors (alarms associated with an AppConfig environment) automatically roll back an unhealthy configuration deployment. They are scoped to deployments, not experiment runs:&lt;/p&gt;
+&lt;ul&gt;
+ &lt;li&gt;While a run is active, AWS AppConfig manages the flag value for assigned entities. Ending exposure requires an explicit stop-experiment-run call.&lt;/li&gt;
+ &lt;li&gt;Keep the monitors in place — you still deploy configurations during and after a run (promoting the winner is a deployment).&lt;/li&gt;
+ &lt;li&gt;Treat the alarm-and-stop-the-run pattern above as the guardrail for the experiment itself.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;Choose guardrail metrics by experiment type.&lt;/strong&gt; The right alarm depends on what you’re testing:&lt;/p&gt;
+&lt;ul&gt;
+ &lt;li&gt;Frontend/UI: page load time, client-side error rate, rendering failures, 5xx rate. A conversion lift means nothing if the page is throwing errors.&lt;/li&gt;
+ &lt;li&gt;Backend: p99 latency, throughput, error rate, and resource-specific signals (for the cache example, cache hit ratio and database load). A treatment can look neutral on business metrics while degrading system health.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;Operational hygiene.&lt;/strong&gt; Follow these rules to keep your results valid:&lt;/p&gt;
+&lt;ul&gt;
+ &lt;li&gt;Do not change treatment behavior mid-run — stop, modify, and start a new run instead, or you invalidate the data.&lt;/li&gt;
+ &lt;li&gt;Avoid shipping unrelated changes or overlapping experiments on the same audience while a run is active.&lt;/li&gt;
+ &lt;li&gt;Monitor operational metrics alongside your experiment metrics — a positive result on the headline metric can still hide a latency or error regression.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2&gt;Analyzing Experiment Results&lt;/h2&gt;
+&lt;p&gt;AWS AppConfig provides aggregate real-time metrics — exposure levels, treatment allocation, traffic distribution — but it doesn’t compute your results. Your metric definitions and raw data stay in your warehouse (Amazon S3 + Amazon Athena, Amazon Redshift, Snowflake, Databricks, or other) where you control exactly how success is measured.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;The core principle: post-exposure attribution.&lt;/strong&gt; Only count a user’s outcomes after the moment they were assigned to their treatment. Events before assignment don’t attribute to the experiment and bias your results. Concretely, you join your metric events to the Agent’s assignment records on entity ID, and keep only metric events whose timestamp is at or after that entity’s assignment timestamp.&lt;/p&gt;
+&lt;p&gt;Assuming the Agent’s assignment records and your metric events have landed in Amazon S3 and are queryable through Amazon Athena:&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;WITH assignments AS (&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp; SELECT&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; entityid&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; AS entity_id,&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; treatmentkey&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; AS treatment,&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; MIN(from_iso8601_timestamp(timestamp))&amp;nbsp; AS assigned_at&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp; FROM treatment_assignments&amp;nbsp;&amp;nbsp; -- AWS AppConfig Agent records from STDERR&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp; WHERE type = 'AWS.AppConfig.TreatmentAssignment'&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; AND experimentdefinitionid = 'uioedbc'&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; AND experimentrunnumber = '5'&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp; GROUP BY entityid, treatmentkey&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;),&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;attributed_conversions AS (&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp; SELECT&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; a.treatment,&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; a.entity_id,&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; COUNT(m.entity_id) AS conversions&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp; FROM assignments a&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp; LEFT JOIN experiment_events m&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; -- your existing outcomes table&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; ON&amp;nbsp; m.entity_id = a.entity_id&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; -- or m.customer_id, whichever column it already has&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; AND m.event_type = 'conversion'&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; -- post-exposure attribution: outcomes only count after assignment&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; AND from_iso8601_timestamp(m.timestamp) &amp;gt;= a.assigned_at&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp; GROUP BY a.treatment, a.entity_id&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;)&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;SELECT&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp; treatment,&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp; COUNT(DISTINCT entity_id)&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; AS assigned_users,&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp; SUM(CASE WHEN conversions &amp;gt; 0 THEN 1 ELSE 0 END)&amp;nbsp; AS converters,&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp; ROUND(&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; SUM(CASE WHEN conversions &amp;gt; 0 THEN 1 ELSE 0 END) * 100.0&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; / COUNT(DISTINCT entity_id), 2&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp; )&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; AS conversion_rate_pct&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;FROM attributed_conversions&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;GROUP BY treatment&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;ORDER BY conversion_rate_pct DESC;&amp;nbsp;&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;This returns assigned users, converters, and conversion rate per treatment so you can compare each treatment against the control.
+ &lt;br&gt;
+ The only requirement on your outcomes data is that it carries the same identifier you passed as Entity-Id and a timestamp. Whatever table structure, column names, or warehouse you already use works — the join is on that shared identifier with a timestamp filter.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Adapting the query for other metrics.&lt;/strong&gt; The &lt;code&gt;assignments&lt;/code&gt; CTE and the post-exposure join are reusable; only the metric aggregation changes:&lt;/p&gt;
+&lt;ul&gt;
+ &lt;li&gt;Backend/cache experiments: &lt;code&gt;aggregate AVG(db_query_count)&lt;/code&gt;, cache hit ratio, or &lt;code&gt;approx_percentile(latency_ms, 0.99)&lt;/code&gt; per treatment to confirm the longer TTL cut load without hurting p99.&lt;/li&gt;
+ &lt;li&gt;Continuous metrics generally: replace the converter count with &lt;code&gt;AVG(...)&lt;/code&gt;, &lt;code&gt;SUM(...)&lt;/code&gt;, or &lt;code&gt;approx_percentile(...)&lt;/code&gt; over the attributed rows.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Before you declare a winner, check three things. First, confirm each treatment reached the sample size you set in your launch criteria. Second, confirm the split matches the configured weights; a 50/50 experiment that lands at 46/54 points to an assignment or logging bug, not a result. Third, run a significance test in your statistics tooling, such as a two-proportion z-test for conversion rate. Act on the result only when all three checks pass.&lt;/p&gt;
+&lt;h2&gt;Stopping an experiment and promoting a winner&lt;/h2&gt;
+&lt;p&gt;Stop an experiment run when you have a clear result, when something goes wrong, or when priorities shift. Stopping ends exposure immediately. AWS AppConfig stops managing the flag and your application serves whatever configuration is currently deployed to the environment.
+ &lt;br&gt;
+ &lt;strong&gt;Promoting the winner without a gap.&lt;/strong&gt; The order matters. If you stop first, users briefly revert to the pre-experiment default while you redeploy. To avoid that:&lt;/p&gt;
+&lt;ul&gt;
+ &lt;li&gt;While the experiment is still running, update the feature flag to match the winning treatment and deploy it. Assigned entities see no change — AWS AppConfig is still serving them their treatment.&lt;/li&gt;
+ &lt;li&gt;Stop the experiment. AppConfig releases the flag, and your application picks up the configuration you just deployed: the winner, at 100%, with no gap.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Mind what you change in step 1. Add the winning values as a variant gated by the same audience rule the experiment uses, and nobody sees a change until you stop the run. Change the flag’s default value instead and everyone outside the experiment’s audience picks up the winning value the moment the deployment lands — choose this when you want a full release.&lt;/p&gt;
+&lt;h2&gt;Cost considerations and cleaning up&lt;/h2&gt;
+&lt;p&gt;You pay for experiment-run hours. Billing starts when you call start-experiment-run until you stop the run. Defining experiments and treatments is free.&lt;/p&gt;
+&lt;p&gt;What drives your bill:&lt;/p&gt;
+&lt;ul&gt;
+ &lt;li&gt;Run duration. Stop the run once you have enough data to make a decision.&lt;/li&gt;
+ &lt;li&gt;Concurrent runs. Each active run bills independently. Three simultaneous experiments means three times the hourly rate.&lt;/li&gt;
+ &lt;li&gt;Your data pipeline. AWS AppConfig doesn’t charge for the assignment records the Agent emits; the pipeline that carries them does. CloudWatch Logs, Amazon Data Firehose, Amazon S3, Athena, and your guardrail alarms each bill at their normal rates — see each service’s pricing page, and AWS Systems Manager Pricing for experiment runs.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;To keep costs down, estimate sample size upfront so you know roughly how long a run needs to last, and validate what you can in the 0% window before you ramp. The assignment-log pipeline is the exception: it produces records — and bills — only once real traffic is being assigned.&lt;/p&gt;
+&lt;p&gt;See &lt;a href="https://aws.amazon.com/systems-manager/pricing/"&gt;AWS AppConfig experimentation pricing details here&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Clean up what you created.&lt;/strong&gt; The run-hour charge stops only when you stop the run, and the assignment pipeline keeps billing for as long as it stays in place. When you have finished with the examples in this post, remove what you created in this order:&lt;/p&gt;
+&lt;ul&gt;
+ &lt;li&gt;Stop any running experiment run. Exposure ends immediately and the run-hour charge stops. If you are promoting a winner, deploy the winning flag value first, as described above.&lt;/li&gt;
+ &lt;li&gt;Delete the experiment definitions for both examples. ARCHIVE hides a definition but keeps its run history; DESTROY removes the definition and the history permanently.&lt;/li&gt;
+ &lt;li&gt;Take down the assignment pipeline and the alarms: the Amazon CloudWatch Logs subscription filter, the Amazon Data Firehose delivery stream, and the guardrail alarms. Then unset EXPERIMENT_ASSIGNMENT_LOG_DESTINATION on the Agent and redeploy so it stops writing assignment records.&lt;/li&gt;
+ &lt;li&gt;Decide what to do with the data. The assignment records in Amazon S3, the AWS Glue table over them, and your Athena query-results location all keep incurring storage charges. Delete them unless you want to keep the audit trail, along with the IAM roles and the log group you created only for this walkthrough.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Leave the feature flag and its configuration profile in place if your application still reads them — deleting the flag removes configuration your code depends on. Only the experiment definition has to go.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;1. Stop the run – this ends exposure and the run-hour charge.&amp;nbsp;&lt;/strong&gt;
+ &lt;br&gt;
+ &lt;code&gt;aws appconfig stop-experiment-run \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --application-identifier "StoreFront" \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --experiment-definition-identifier "add-to-cart-redesign" \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --run 5&amp;nbsp;&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;2. Delete both definitions. Use ARCHIVE instead of DESTROY to keep the run history for future reference&lt;/strong&gt;
+ &lt;br&gt;
+ &lt;code&gt;#&amp;nbsp;&amp;nbsp;&amp;nbsp; the run history for future reference.&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;aws appconfig delete-experiment-definition \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --application-identifier "StoreFront" \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --experiment-definition-identifier "add-to-cart-redesign" \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --delete-type DESTROY&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;aws appconfig delete-experiment-definition \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --application-identifier "Catalog" \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --experiment-definition-identifier "cache-ttl-tuning" \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --delete-type DESTROY&amp;nbsp;&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;3. Remove the assignment pipeline and the guardrail alarm.&amp;nbsp;&lt;/strong&gt;
+ &lt;br&gt;
+ &lt;code&gt;aws logs delete-subscription-filter \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --log-group-name "/ecs/storefront" \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --filter-name "appconfig-treatment-assignments"&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;aws firehose delete-delivery-stream \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --delivery-stream-name "experiment-assignments"&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;aws cloudwatch delete-alarms --alarm-names "exp-add-to-cart-5xx"&amp;nbsp;&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;4. Optional and irreversible – drop the queryable copy of the assignment data. Substitute your own AWS Glue database name.&amp;nbsp;&lt;/strong&gt;
+ &lt;br&gt;
+ &lt;code&gt;aws glue delete-table \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --database-name "experiments" \&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp; --name "treatment_assignments"&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;&amp;nbsp;&lt;/code&gt;
+ &lt;br&gt;
+ &lt;code&gt;aws s3 rm "s3://my-experiment-data/assignments/" --recursive&amp;nbsp;&lt;/code&gt;&lt;/p&gt;
+&lt;h2&gt;Conclusion&lt;/h2&gt;
+&lt;p&gt;In this post, we took a single idea — “we have a theory, but no production evidence” — and turned it into two concrete experiments using AWS AppConfig experimentation: a frontend button redesign and a backend cache-TTL change. In each case, we created an experiment definition and expressed the control and treatments as feature-flag variants. We delivered them through the Agent with gradual exposure and alarm guardrails, and analyzed results with post-exposure attribution in our own data warehouse.&lt;/p&gt;
+&lt;p&gt;Experimentation becomes part of the AWS AppConfig workflow you already use, and you keep ownership of your metrics, analysis, and data. You pay per experiment-run hour, so your cost grows with how much you test.&lt;/p&gt;
+&lt;p&gt;To go deeper, start with the &lt;a href="https://docs.aws.amazon.com/appconfig/latest/userguide/appconfig-experimentation.html"&gt;AWS AppConfig experimentation documentation&lt;/a&gt;, review r&lt;a href="https://docs.aws.amazon.com/appconfig/latest/userguide/appconfig-experimentation-about-running-an-experiment.html"&gt;unning and monitoring an experiment for guardrail best practices&lt;/a&gt; and &lt;a href="https://catalog.us-east-1.prod.workshops.aws/workshops/3f5d84ef-0a0f-4f4d-99c3-a8ed18f7b971/en-US"&gt;try the hands-on workshop&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;If you have questions or feedback, leave a comment on this post. To get started, open the AWS AppConfig console and create your first experiment definition.&lt;/p&gt;
+&lt;p&gt;&amp;nbsp;&lt;/p&gt;
+&lt;footer&gt;
+ &lt;div class="blog-author-box"&gt;
+  &lt;div class="blog-author-image"&gt;
+   &lt;img loading="lazy" class="wp-image-11636 alignleft" src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/sakashkz.jpg" alt="" width="120" height="160"&gt;
+  &lt;/div&gt;
+  &lt;h3 class="lb-h4"&gt;Akash Kumar Sinha&lt;/h3&gt;
+  &lt;p style="text-align: left"&gt;Akash is a DevOps Consultant and GenAI Ambassador at AWS, where he helps customers transform their cloud operations through containerization, feature management, and modern delivery practices. He specializes in container orchestration, AWS AppConfig, and DevOps automation, and is a regular speaker at AWS events across Europe. Outside of work, Akash is passionate about knowledge-sharing and exploring the intersection of generative AI and cloud-native innovation.&lt;/p&gt;
+  &lt;p&gt;&lt;/p&gt;
+ &lt;/div&gt;
+&lt;/footer&gt;
+&lt;footer&gt;
+ &lt;div class="blog-author-box"&gt;
+  &lt;div class="blog-author-image"&gt;
+   &lt;img loading="lazy" class="wp-image-11636 alignleft" src="https://d2908q01vomqb2.cloudfront.net/7719a1c782a1ba91c031a682a0a2f8658209adbf/2026/09/30/AK.jpeg" alt="" width="120" height="160"&gt;
+  &lt;/div&gt;
+  &lt;h3 class="lb-h4"&gt;Aparna Krishnamoorthy&lt;/h3&gt;
+  &lt;p style="text-align: left"&gt;Aparna Krishnamoorthy is a Senior Product Manager on AWS Configuration services, focused on how customers manage application configuration and feature flags across AWS.&lt;/p&gt;
+  &lt;p&gt;&lt;/p&gt;
+ &lt;/div&gt;
+&lt;/footer&gt;</content:encoded>
+					
+		
+		
+			</item>
+
+	</channel>
+</rss>

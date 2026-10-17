@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/">
+<title type="text">Atom Ops</title><link rel="self" href="https://atom.example.org/feed.xml"/><link rel="alternate" href="https://atom.example.org/"/>
+<entry><title type="html">Terraform 1.12 &lt;b&gt;stacks&lt;/b&gt;</title><link rel="enclosure" href="https://atom.example.org/a.mp3"/><link rel="alternate" type="text/html" href="/2026/10/stacks/"/><author><name>Team Atom</name></author><published>2026-10-16T05:00:00Z</published><updated>2026-10-16T06:00:00Z</updated><media:content url="https://atom.example.org/stacks.webp" medium="image"/></entry>
+<entry><title>Updated only</title><link href="https://atom.example.org/2026/10/updated/"/><updated>2026-10-12T00:00:00+02:00</updated></entry>
+</feed>

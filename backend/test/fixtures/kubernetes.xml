@@ -1,0 +1,919 @@
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>Kubernetes Blog</title><link>https://kubernetes.io/</link><description>The Kubernetes blog is used by the project to communicate new features, community reports, and any news that might be relevant to the Kubernetes community.</description><generator>Hugo -- gohugo.io</generator><language>en</language><image><url>https://raw.githubusercontent.com/kubernetes/kubernetes/master/logo/logo.png</url><title>The Kubernetes project logo</title><link>https://kubernetes.io/</link></image><atom:link href="https://kubernetes.io/feed.xml" rel="self" type="application/rss+xml"/><item><title>Why Is My Kubernetes Job Still Pending? Tracing Kueue Admission with Headlamp</title><link>https://kubernetes.io/blog/2026/10/14/tracing-kueue-admission-with-headlamp/</link><pubDate>Wed, 14 Oct 2026 10:35:00 -0800</pubDate><guid>https://kubernetes.io/blog/2026/10/14/tracing-kueue-admission-with-headlamp/</guid><description>
+&lt;p>You submit a &lt;a href="https://kubernetes.io/docs/concepts/workloads/controllers/job/">Kubernetes Job&lt;/a> and
+wait for its Pods to appear. A minute passes. Then another. The Job is still suspended, there are no
+application logs, and there may not even be a Pod to inspect.&lt;/p>
+&lt;p>In a cluster managed by &lt;a href="https://kueue.sigs.k8s.io/">Kueue&lt;/a>, this can be completely normal. Kueue
+may still be deciding whether the Job can use the requested resources. The useful question is not
+only “Why is the Pod pending?” It is first “Has Kueue admitted the Workload?”&lt;/p>
+&lt;p>The &lt;a href="https://github.com/headlamp-k8s/plugins/tree/main/kueue">Kueue plugin for Headlamp&lt;/a> brings that
+investigation into the Headlamp UI. Instead of reconstructing the admission path from several
+commands and large YAML objects, you can begin with the Workload, read its condition message, and
+follow links through the LocalQueue, ClusterQueue, ResourceFlavor, and Cohort.&lt;/p>
+&lt;p>This article follows that Headlamp-first path. The command line appears only in a short optional
+section for reproducing the example.&lt;/p>
+&lt;h2 id="before-you-begin">Before you begin&lt;a class="td-heading-self-link" href="#before-you-begin" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>You need a Kubernetes cluster with &lt;a href="https://kueue.sigs.k8s.io/docs/installation/">Kueue installed&lt;/a>,
+a &lt;a href="https://headlamp.dev/docs/latest/installation/">Headlamp installation&lt;/a>, and the
+&lt;a href="https://github.com/headlamp-k8s/plugins/tree/main/kueue/0.1.0-alpha">&lt;code>0.1.0-alpha&lt;/code> Kueue plugin&lt;/a>.
+Your Kubernetes identity must be allowed to read the Kueue resources used in this article.&lt;/p>
+&lt;p>The alpha release provides read-only views for Kueue &lt;code>v1beta2&lt;/code> Cohorts, ClusterQueues, LocalQueues,
+ResourceFlavors, and Workloads. It does not add its own create, edit, stop, resume, or delete
+workflows. Headlamp still provides its standard YAML and resource actions where your permissions
+allow them.&lt;/p>
+&lt;h2 id="first-separate-admission-from-pod-scheduling">First, separate admission from Pod scheduling&lt;a class="td-heading-self-link" href="#first-separate-admission-from-pod-scheduling" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>Kueue and the Kubernetes scheduler answer different questions.&lt;/p>
+&lt;ul>
+&lt;li>
+&lt;p>Kueue admission: Should this Workload start now, considering queue policy, quota, ResourceFlavors,
+admission checks, and other waiting Workloads?&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>Pod scheduling: After the Workload is admitted and the Job resumes, which nodes can run its Pods?&lt;/p>
+&lt;/li>
+&lt;/ul>
+&lt;p>That boundary changes the investigation. If the Workload is not admitted, stay in the Kueue section
+of Headlamp. If it is admitted but its Pods are still &lt;code>Pending&lt;/code>, move to Headlamp's normal Job and
+Pod views and inspect scheduler events.&lt;/p>
+&lt;figure>
+&lt;img src="https://kubernetes.io/blog/2026/10/14/tracing-kueue-admission-with-headlamp/kueue-admission-architecture.svg"
+alt="A Kubernetes Job becomes a Kueue Workload. Kueue evaluates its LocalQueue, ClusterQueue, ResourceFlavor, and optional Cohort before resuming the Job. Headlamp reads these resources through the Kubernetes API."/> &lt;figcaption>
+&lt;p>Kueue admission architecture&lt;/p>
+&lt;/figcaption>
+&lt;/figure>
+&lt;h2 id="the-headlamp-first-troubleshooting-path">The Headlamp-first troubleshooting path&lt;a class="td-heading-self-link" href="#the-headlamp-first-troubleshooting-path" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>The quickest investigation starts with the Workload, not with a shell.&lt;/p>
+&lt;figure>
+&lt;img src="https://kubernetes.io/blog/2026/10/14/tracing-kueue-admission-with-headlamp/headlamp-kueue-troubleshooting-flow.svg"
+alt="A Headlamp troubleshooting flow that starts with Kueue Workloads, checks admission conditions, follows LocalQueue and ClusterQueue links when admission is blocked, and switches to Job and Pod views after admission."/> &lt;figcaption>
+&lt;p>Tracing a pending Job through Headlamp&lt;/p>
+&lt;/figcaption>
+&lt;/figure>
+&lt;h2 id="step-1-open-the-workloads-view">Step 1: Open the Workloads view&lt;a class="td-heading-self-link" href="#step-1-open-the-workloads-view" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>In Headlamp, open &lt;strong>Kueue → Workloads&lt;/strong>. Select the namespace that contains the Job, then find the
+Workload created for it.&lt;/p>
+&lt;p>Kueue creates a &lt;a href="https://kueue.sigs.k8s.io/docs/concepts/workload/">Workload&lt;/a> to represent the
+resource request and admission state of a Job. In the alpha plugin, owner references are shown as
+&lt;code>Kind/name&lt;/code> text but are not yet clickable. The Workload name normally contains the Job name, so the
+namespace filter and table search are the simplest ways to locate it.&lt;/p>
+&lt;p>Before opening the detail page, the list already gives you a useful first scan:&lt;/p>
+&lt;ul>
+&lt;li>
+&lt;p>LocalQueue&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>priority and priority class&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>active state&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>admitted state&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>completion state&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>a readable current status such as &lt;code>Admitted&lt;/code>, &lt;code>Finished&lt;/code>, or &lt;code>Inadmissible&lt;/code>&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>age&lt;/p>
+&lt;/li>
+&lt;/ul>
+&lt;p>If there is no matching Workload, check three things before going further: the selected namespace,
+whether the Job was submitted to a LocalQueue, and whether your Kubernetes account can list
+Workloads. The plugin performs permission checks and displays an access message when the current
+identity cannot read a resource.&lt;/p>
+&lt;h2 id="step-2-read-status-conditions-and-events">Step 2: Read status, conditions, and events&lt;a class="td-heading-self-link" href="#step-2-read-status-conditions-and-events" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>Open the Workload. Start with its current status and
+&lt;a href="https://kueue.sigs.k8s.io/docs/tasks/troubleshooting/troubleshooting_jobs/#is-my-job-admitted">conditions&lt;/a>,
+not with the full YAML.&lt;/p>
+&lt;p>For admission troubleshooting, the most important condition types are &lt;code>QuotaReserved&lt;/code> and
+&lt;code>Admitted&lt;/code>.&lt;/p>
+&lt;ul>
+&lt;li>
+&lt;p>&lt;code>Admitted=True&lt;/code> means Kueue has admitted the Workload. The Job can resume, so any remaining
+&lt;code>Pending&lt;/code> Pods belong to the scheduling branch of the investigation.&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>&lt;code>QuotaReserved=False&lt;/code> with a reason such as &lt;code>Pending&lt;/code> means Kueue has not reserved quota. The
+condition message explains what prevented the reservation.&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>An &lt;code>Inadmissible&lt;/code> status means the Workload currently cannot fit the available queue
+configuration. A missing covered resource, unsuitable ResourceFlavor, stopped queue, or admission
+check can all lead you here.&lt;/p>
+&lt;/li>
+&lt;/ul>
+&lt;p>For example, a condition message may report that Kueue could not assign a ResourceFlavor because the
+ClusterQueue has insufficient CPU quota. That message is the first real answer to “Why is my Job
+still pending?” The rest of the Headlamp journey explains the configuration behind it.&lt;/p>
+&lt;p>Also check the &lt;strong>Events&lt;/strong> section. Conditions describe the current state; events help show what
+recently changed or what Kueue attempted.&lt;/p>
+&lt;h2 id="step-3-compare-the-workload-s-request-with-its-assignment">Step 3: Compare the Workload's request with its assignment&lt;a class="td-heading-self-link" href="#step-3-compare-the-workload-s-request-with-its-assignment" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>Stay on the Workload detail page and inspect the PodSets and resource requests. The plugin shows the
+requested Pod count, CPU, memory, and other resources that Kueue evaluates together.&lt;/p>
+&lt;p>This matters because a Job with &lt;code>parallelism: 3&lt;/code> and a one-CPU request per Pod asks Kueue for three
+CPUs in total. Looking at only one Pod's template would underestimate the Workload.&lt;/p>
+&lt;p>If quota has already been reserved, the same page also shows the assigned ClusterQueue,
+ResourceFlavors, and admitted resource usage. If those admission assignments are absent, the
+Workload has not reached that point yet.&lt;/p>
+&lt;p>In our example, the Workload requests:&lt;/p>
+&lt;ul>
+&lt;li>
+&lt;p>three Pods&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>three CPUs in total&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>600 MiB of memory in total&lt;/p>
+&lt;/li>
+&lt;/ul>
+&lt;p>The next question is where that request entered Kueue.&lt;/p>
+&lt;h2 id="step-4-follow-the-linked-localqueue">Step 4: Follow the linked LocalQueue&lt;a class="td-heading-self-link" href="#step-4-follow-the-linked-localqueue" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>Use the &lt;a href="https://kueue.sigs.k8s.io/docs/concepts/local_queue/">LocalQueue&lt;/a> link on the Workload
+detail page. A LocalQueue is the namespace-level entry point used by the Job. It connects namespaced
+Workloads to a cluster-scoped ClusterQueue.&lt;/p>
+&lt;p>The LocalQueue page shows:&lt;/p>
+&lt;ul>
+&lt;li>
+&lt;p>its namespace and connected ClusterQueue&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>stop policy and current status&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>pending, reserving, and admitted Workload counts&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>Kueue conditions and Kubernetes events&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>related Workloads in the same namespace&lt;/p>
+&lt;/li>
+&lt;/ul>
+&lt;p>This page answers two practical questions: Did the Job enter the queue you expected, and is it the
+only Workload waiting there?&lt;/p>
+&lt;p>If the LocalQueue is inactive or stopped, that may already explain the wait. If it is active, follow
+the linked ClusterQueue to inspect the capacity behind it.&lt;/p>
+&lt;h2 id="step-5-inspect-clusterqueue-capacity-and-usage">Step 5: Inspect ClusterQueue capacity and usage&lt;a class="td-heading-self-link" href="#step-5-inspect-clusterqueue-capacity-and-usage" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>A &lt;a href="https://kueue.sigs.k8s.io/docs/concepts/cluster_queue/">ClusterQueue&lt;/a> represents the
+cluster-level quota and admission policy available to one or more LocalQueues.&lt;/p>
+&lt;p>On its Headlamp detail page, compare the Workload request with:&lt;/p>
+&lt;ul>
+&lt;li>
+&lt;p>covered resources&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>nominal quota for each ResourceFlavor&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>current reservations and usage&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>borrowing and lending limits&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>pending, reserving, and admitted Workload counts&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>queueing strategy and stop policy&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>preemption, fair-sharing, flavor-fungibility, and admission-check settings&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>Kueue conditions and Kubernetes events&lt;/p>
+&lt;/li>
+&lt;/ul>
+&lt;p>For the example in this article, the ClusterQueue provides a nominal quota of two CPUs and two Pod
+slots. The Workload asks for three of each. The condition message and the ClusterQueue page now tell
+the same story: the Workload does not fit, so Kueue leaves the Job suspended.&lt;/p>
+&lt;p>This is an admission-capacity problem. It is not evidence that kube-scheduler failed to find a node.&lt;/p>
+&lt;h2 id="step-6-check-resourceflavor-and-cohort-when-needed">Step 6: Check ResourceFlavor and Cohort when needed&lt;a class="td-heading-self-link" href="#step-6-check-resourceflavor-and-cohort-when-needed" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>Quota is not always a single pool. A
+&lt;a href="https://kueue.sigs.k8s.io/docs/concepts/resource_flavor/">ResourceFlavor&lt;/a> can represent a class of
+compute through node labels, taints, tolerations, or topology settings. Use the ResourceFlavor link
+from the ClusterQueue when the condition mentions flavor assignment or when the Workload requires a
+particular hardware class, such as GPU nodes.&lt;/p>
+&lt;p>If the ClusterQueue belongs to a &lt;a href="https://kueue.sigs.k8s.io/docs/concepts/cohort/">Cohort&lt;/a>, follow
+that link too. Cohorts let ClusterQueues share unused quota. The Headlamp page shows parent and
+child Cohorts, member ClusterQueues, referenced ResourceFlavors, resource groups, borrowing and
+lending limits, and fair-sharing information.&lt;/p>
+&lt;p>These pages help answer a more subtle question: Is the Workload blocked because the queue has no
+quota of its own, because it cannot borrow enough, or because no suitable flavor can be assigned?&lt;/p>
+&lt;h2 id="what-we-learned-without-leaving-headlamp">What we learned without leaving Headlamp&lt;a class="td-heading-self-link" href="#what-we-learned-without-leaving-headlamp" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>For the sample pending Job, the UI gives us a complete explanation:&lt;/p>
+&lt;ol>
+&lt;li>
+&lt;p>The Workload is not admitted.&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>Its &lt;code>QuotaReserved&lt;/code> condition is false and the message points to insufficient quota.&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>The Workload requests three CPUs and three Pod slots.&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>Its LocalQueue is active and points to the expected ClusterQueue.&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>The ClusterQueue provides only two CPUs and two Pod slots.&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>Kueue therefore keeps the Job suspended until quota becomes available or the queue configuration
+changes.&lt;/p>
+&lt;/li>
+&lt;/ol>
+&lt;p>The important part is not that Headlamp invents a new status. It reads the same Kubernetes API
+objects as other clients, then places the related resources and human-readable values in one
+connected investigation.&lt;/p>
+&lt;h2 id="if-the-workload-is-admitted-switch-views">If the Workload is admitted, switch views&lt;a class="td-heading-self-link" href="#if-the-workload-is-admitted-switch-views" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>Suppose the Workload detail page shows &lt;code>Admitted=True&lt;/code>, but the application is still not running.
+Kueue has completed its part of the decision. Continue in Headlamp's standard Kubernetes views:&lt;/p>
+&lt;ol>
+&lt;li>
+&lt;p>Open &lt;strong>Workloads → Jobs&lt;/strong> and inspect the Job state and events.&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>Open &lt;strong>Workloads → Pods&lt;/strong> and filter by the Job name or namespace.&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>Select a &lt;code>Pending&lt;/code> Pod and read its &lt;strong>Events&lt;/strong> section.&lt;/p>
+&lt;/li>
+&lt;/ol>
+&lt;p>At this stage, look for scheduler concerns such as insufficient node capacity,
+&lt;a href="https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/">node affinity&lt;/a>,
+&lt;a href="https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/">taints and tolerations&lt;/a>,
+topology constraints, persistent-volume binding, or image-pull failures.&lt;/p>
+&lt;p>This handoff is the most useful troubleshooting rule in the article:&lt;/p>
+&lt;ul>
+&lt;li>
+&lt;p>Not admitted: investigate Kueue resources in Headlamp.&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>&lt;code>Admitted&lt;/code>, but Pods are &lt;code>Pending&lt;/code>: investigate Job, Pod, node, and scheduler information in
+Headlamp.&lt;/p>
+&lt;/li>
+&lt;/ul>
+&lt;h2 id="a-repeatable-headlamp-checklist">A repeatable Headlamp checklist&lt;a class="td-heading-self-link" href="#a-repeatable-headlamp-checklist" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>When the next Job does not start, use this short path:&lt;/p>
+&lt;ol>
+&lt;li>
+&lt;p>Open &lt;strong>Kueue → Workloads&lt;/strong> and select the correct namespace.&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>Find the Workload associated with the Job.&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>Check the readable status, &lt;code>Admitted&lt;/code>, and &lt;code>QuotaReserved&lt;/code> conditions.&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>Read the condition message and recent events.&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>Compare PodSet resource requests with any admission assignments.&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>Follow the LocalQueue link and confirm its status and ClusterQueue.&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>Follow the ClusterQueue link and compare quota, reservations, usage, and policy.&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>Inspect ResourceFlavor or Cohort details when the message points to flavor selection or shared
+quota.&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>If admitted, move to Headlamp's Job and Pod views.&lt;/p>
+&lt;/li>
+&lt;/ol>
+&lt;h2 id="what-headlamp-replaces-during-this-investigation">What Headlamp replaces during this investigation&lt;a class="td-heading-self-link" href="#what-headlamp-replaces-during-this-investigation" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>The plugin does not replace &lt;code>kubectl&lt;/code> or
+&lt;a href="https://kueue.sigs.k8s.io/docs/reference/kubectl-kueue/">&lt;code>kueuectl&lt;/code>&lt;/a> for scripts, exact object
+output, or changes. It replaces the repetitive UI-less navigation needed during an interactive
+investigation.&lt;/p>
+&lt;table>
+&lt;thead>
+&lt;tr>
+&lt;th>Question&lt;/th>
+&lt;th>Headlamp path&lt;/th>
+&lt;th>Command-line equivalent&lt;/th>
+&lt;/tr>
+&lt;/thead>
+&lt;tbody>
+&lt;tr>
+&lt;td>Is the Workload admitted?&lt;/td>
+&lt;td>&lt;strong>Kueue → Workloads → status and conditions&lt;/strong>&lt;/td>
+&lt;td>&lt;code>kubectl describe workload &amp;lt;workload-name&amp;gt; -n &amp;lt;namespace&amp;gt;&lt;/code>&lt;/td>
+&lt;/tr>
+&lt;tr>
+&lt;td>Which LocalQueue did it enter?&lt;/td>
+&lt;td>&lt;strong>Workload → linked LocalQueue&lt;/strong>&lt;/td>
+&lt;td>&lt;code>kubectl get localqueue &amp;lt;localqueue-name&amp;gt; -n &amp;lt;namespace&amp;gt; -o yaml&lt;/code>&lt;/td>
+&lt;/tr>
+&lt;tr>
+&lt;td>Which ClusterQueue provides quota?&lt;/td>
+&lt;td>&lt;strong>LocalQueue → linked ClusterQueue&lt;/strong>&lt;/td>
+&lt;td>&lt;code>kubectl get clusterqueue &amp;lt;clusterqueue-name&amp;gt; -o yaml&lt;/code>&lt;/td>
+&lt;/tr>
+&lt;tr>
+&lt;td>Which flavor or shared quota matters?&lt;/td>
+&lt;td>&lt;strong>ClusterQueue → ResourceFlavor or Cohort&lt;/strong>&lt;/td>
+&lt;td>&lt;code>kubectl get resourceflavor &amp;lt;flavor-name&amp;gt; -o yaml&lt;/code> or &lt;code>kubectl get cohort &amp;lt;cohort-name&amp;gt; -o yaml&lt;/code>&lt;/td>
+&lt;/tr>
+&lt;tr>
+&lt;td>What happened after admission?&lt;/td>
+&lt;td>&lt;strong>Workloads → Jobs and Pods → events&lt;/strong>&lt;/td>
+&lt;td>&lt;code>kubectl describe job &amp;lt;job-name&amp;gt; -n &amp;lt;namespace&amp;gt;&lt;/code> or &lt;code>kubectl describe pod &amp;lt;pod-name&amp;gt; -n &amp;lt;namespace&amp;gt;&lt;/code>&lt;/td>
+&lt;/tr>
+&lt;/tbody>
+&lt;/table>
+&lt;p>For scripts and GitOps workflows, the command line remains the right tool. For a person asking “why
+is this waiting?”, the linked Headlamp path is usually faster to read.&lt;/p>
+&lt;h2 id="optional-reproduce-the-pending-scenario">Optional: reproduce the pending scenario&lt;a class="td-heading-self-link" href="#optional-reproduce-the-pending-scenario" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>The plugin repository includes
+&lt;a href="https://github.com/headlamp-k8s/plugins/tree/main/kueue/test-files/deploy">sample Cohort, ClusterQueue, LocalQueue, ResourceFlavor, and Job manifests&lt;/a>
+for local testing. Apply those examples to a cluster where Kueue is installed, then open the Kueue
+section in Headlamp.&lt;/p>
+&lt;p>To reproduce the specific quota mismatch used in this article, configure a ClusterQueue with two
+CPUs and two Pod slots, then submit a three-Pod Job that requests one CPU per Pod. The Job enters
+its LocalQueue, Kueue creates a Workload, and the Workload remains pending because the combined
+request is larger than the available quota.&lt;/p>
+&lt;p>Keeping this setup separate from the main walkthrough is intentional: once the resources exist, the
+investigation itself should happen in Headlamp.&lt;/p>
+&lt;h2 id="current-alpha-limitations">Current alpha limitations&lt;a class="td-heading-self-link" href="#current-alpha-limitations" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>The &lt;code>0.1.0-alpha&lt;/code> release is an initial read-only view of the Kueue admission path.&lt;/p>
+&lt;ul>
+&lt;li>
+&lt;p>The plugin does not add its own create, edit, pause, resume, or delete flows.&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>Workload owner references are displayed as text and are not currently navigable.&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>The UI depends on the Kubernetes permissions of the identity used by Headlamp.&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>Metrics and a visual relationship map are possible follow-up areas rather than features of this
+release.&lt;/p>
+&lt;/li>
+&lt;/ul>
+&lt;p>These limits are useful to state clearly: the plugin's current purpose is to make admission state
+and resource relationships easier to inspect.&lt;/p>
+&lt;h2 id="developed-during-lfx-mentorship">Developed during LFX Mentorship&lt;a class="td-heading-self-link" href="#developed-during-lfx-mentorship" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>The plugin was developed during &lt;a href="https://mentorship.lfx.linuxfoundation.org/">CNCF LFX Mentorship&lt;/a>
+2026 Term 2 using TypeScript, React, Kubernetes APIs, and Headlamp's plugin system.&lt;/p>
+&lt;p>Utkarsh Raj implemented the plugin with guidance and review from René Dudfield
+(&lt;a href="https://github.com/illume">@illume&lt;/a>) and Kevin Hannon (&lt;a href="https://github.com/kannon92">@kannon92&lt;/a>).
+Feedback from the Headlamp and Kueue communities shaped the resource views, status presentation,
+navigation, documentation, tests, and first alpha release.&lt;/p>
+&lt;h2 id="try-it-and-share-feedback">Try it and share feedback&lt;a class="td-heading-self-link" href="#try-it-and-share-feedback" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>Explore the &lt;a href="https://github.com/headlamp-k8s/plugins/tree/main/kueue">plugin source and README&lt;/a>,
+read the
+&lt;a href="https://github.com/headlamp-k8s/plugins/tree/main/kueue/0.1.0-alpha">&lt;code>0.1.0-alpha&lt;/code> release documentation&lt;/a>,
+or share feedback in the &lt;a href="https://github.com/headlamp-k8s/plugins/issues/1251">release issue&lt;/a>.&lt;/p>
+&lt;p>If a pending Workload is still difficult to explain after following the Headlamp path, that is
+exactly the kind of feedback that can improve the plugin.&lt;/p></description></item>
+<item><title>The Shift to cgroup v2 in Kubernetes: What You Need to Know</title><link>https://kubernetes.io/blog/2026/10/06/kubernetes-cgroups-v2-shift/</link><pubDate>Tue, 06 Oct 2026 10:00:00 -0800</pubDate><guid>https://kubernetes.io/blog/2026/10/06/kubernetes-cgroups-v2-shift/</guid><description>
+&lt;p>In Linux, &lt;em>cgroups&lt;/em> (control groups) are a kernel feature used for managing system resources.
+Kubernetes uses cgroups to allocate resources like CPU and memory to containers,
+ensuring that applications run smoothly without interfering with each other.
+With the release of Kubernetes v1.31, support for v1 cgroup management moved into
+&lt;a href="https://kubernetes.io/blog/2024/08/14/kubernetes-1-31-moving-cgroup-v1-support-maintenance-mode/">maintenance mode&lt;/a>.
+Support for v2 cgroup management has been stable since Kubernetes v1.25.&lt;/p>
+&lt;p>Compared with cgroup v1, cgroup v2 provides a single unified hierarchy,
+a more consistent interface, and a stronger foundation for resource isolation
+and modern resource-management features.&lt;/p>
+&lt;h2 id="deprecation-of-cgroup-v1">Deprecation of cgroup v1&lt;a class="td-heading-self-link" href="#deprecation-of-cgroup-v1" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>Kubernetes has &lt;a href="https://kubernetes.io/docs/concepts/architecture/cgroups/#deprecation-of-cgroup-v1">deprecated cgroup v1&lt;/a>.
+Starting with Kubernetes v1.35, &lt;code>failCgroupV1&lt;/code> defaults to &lt;code>true&lt;/code>, so the kubelet does not start
+on a cgroup v1 node by default. Administrators can temporarily set &lt;code>failCgroupV1: false&lt;/code> in the
+&lt;a href="https://kubernetes.io/docs/tasks/administer-cluster/kubelet-config-file/">kubelet configuration file&lt;/a>, but removal will
+follow the &lt;a href="https://kubernetes.io/docs/reference/using-api/deprecation-policy/">Kubernetes deprecation policy&lt;/a>.
+Further removal work is tracked in &lt;a href="https://www.kubernetes.dev/resources/keps/5573">KEP-5573: Remove cgroup v1 support&lt;/a>.&lt;/p>
+&lt;p>If you are still on a release older than v1.35, migrate every Linux node to
+cgroup v2 before upgrading, or plan to set the temporary &lt;code>failCgroupV1: false&lt;/code>
+override. If you are already on v1.35 or later, confirm that every Linux node
+runs cgroup v2 (or that you intentionally keep the override). Under the default
+configuration, a remaining cgroup v1 node fails during kubelet startup.&lt;/p>
+&lt;p>For kubeadm-managed clusters, Kubernetes v1.35 also makes this an earlier, stricter check. The
+&lt;code>SystemVerification&lt;/code> preflight check, provided by &lt;code>k8s.io/system-validators&lt;/code>, returns an error during
+&lt;code>kubeadm init&lt;/code>, &lt;code>kubeadm join&lt;/code>, and &lt;code>kubeadm upgrade&lt;/code> when it detects cgroup v1 with kubelet v1.35 or
+later; with an older kubelet, the check remains a warning. See
+&lt;a href="https://github.com/kubernetes/system-validators/releases/tag/v1.12.1">kubernetes/system-validators#1.12.1 release notes&lt;/a> for details.&lt;/p>
+&lt;p>The top FAQs cover three main areas: why to migrate, the benefits and drawbacks,
+and key points to keep in mind when using cgroup v2.&lt;/p>
+&lt;h2 id="limitations-of-cgroup-v1-and-improvements-with-cgroup-v2">Limitations of cgroup v1 and Improvements with cgroup v2&lt;a class="td-heading-self-link" href="#limitations-of-cgroup-v1-and-improvements-with-cgroup-v2" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>The Linux kernel documentation describes both interfaces:&lt;/p>
+&lt;ul>
+&lt;li>&lt;a href="https://www.kernel.org/doc/Documentation/cgroup-v1/">cgroup v1 documentation&lt;/a>&lt;/li>
+&lt;li>&lt;a href="https://docs.kernel.org/admin-guide/cgroup-v2.html">cgroup v2 documentation&lt;/a>&lt;/li>
+&lt;/ul>
+&lt;p>Let's enumerate some known issues.&lt;/p>
+&lt;h3 id="active-file-memory-is-not-considered-available-memory">&lt;code>active_file&lt;/code> memory is not considered available memory&lt;a class="td-heading-self-link" href="#active-file-memory-is-not-considered-available-memory" aria-label="Heading self-link">&lt;/a>&lt;/h3>&lt;p>The kubelet treats &lt;code>active_file&lt;/code> memory as not reclaimable. For I/O-intensive workloads, a large
+page cache can therefore make the kubelet report memory pressure and evict Pods. This is a
+&lt;a href="https://kubernetes.io/docs/concepts/scheduling-eviction/node-pressure-eviction/#active-file-memory-is-not-considered-as-available-memory">known kubelet issue&lt;/a>
+(&lt;a href="https://github.com/kubernetes/kubernetes/issues/43916">kubernetes/kubernetes#43916&lt;/a>); migrating to
+cgroup v2 does not by itself change that calculation. The documented workaround is to set equal
+memory requests and limits for containers that perform intensive I/O, after measuring an appropriate
+value.&lt;/p>
+&lt;h3 id="memory-qos-updates-in-kubernetes-v1-36">Memory QoS updates in Kubernetes v1.36&lt;a class="td-heading-self-link" href="#memory-qos-updates-in-kubernetes-v1-36" aria-label="Heading self-link">&lt;/a>&lt;/h3>&lt;p>&lt;a href="https://kubernetes.io/docs/concepts/workloads/pods/pod-qos/#memory-qos-with-cgroup-v2">Memory QoS&lt;/a> was introduced as an alpha feature in Kubernetes v1.22 and
+updated in v1.27. It remains alpha in v1.36, but now separates memory throttling from memory
+reservation and adds &lt;a href="https://kubernetes.io/blog/2026/04/29/kubernetes-v1-36-memory-qos-tiered-protection/">tiered memory protection&lt;/a>:&lt;/p>
+&lt;p>Memory QoS is available &lt;strong>only&lt;/strong> on Linux nodes that use cgroup v2. It relies on the cgroup v2 memory
+controller: &lt;code>memory.high&lt;/code> provides throttling, while &lt;code>memory.min&lt;/code> and &lt;code>memory.low&lt;/code> provide hard and
+soft protection when tiered reservation is enabled. cgroup v1 cannot provide this protection model.&lt;/p>
+&lt;ul>
+&lt;li>
+&lt;p>Enabling the &lt;code>MemoryQoS&lt;/code> feature gate applies &lt;code>memory.high&lt;/code> throttling to Burstable containers.
+The threshold is derived from the request, limit, and &lt;code>memoryThrottlingFactor&lt;/code> (default &lt;code>0.9&lt;/code>).&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>&lt;code>memoryReservationPolicy: None&lt;/code> is the default. It does not write &lt;code>memory.min&lt;/code> or &lt;code>memory.low&lt;/code>.&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>&lt;code>memoryReservationPolicy: TieredReservation&lt;/code> maps Guaranteed Pod memory requests to &lt;code>memory.min&lt;/code>
+(hard protection) and Burstable Pod requests to &lt;code>memory.low&lt;/code> (soft protection). BestEffort Pods
+receive neither protection.&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>The kubelet exposes Alpha metrics for the total &lt;code>memory.min&lt;/code> and &lt;code>memory.low&lt;/code> reservations on a node.&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>Kernel 5.9 or later is recommended. On older kernels, &lt;code>memory.high&lt;/code> reclaim can trigger a known
+livelock; from v1.36 the kubelet logs a warning when Memory QoS is enabled on an affected kernel.&lt;/p>
+&lt;/li>
+&lt;/ul>
+&lt;p>For example, to opt in to tiered protection:&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-yaml" data-lang="yaml">&lt;span class="line">&lt;span class="cl">&lt;span class="nt">apiVersion&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="l">kubelet.config.k8s.io/v1beta1&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="nt">kind&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="l">KubeletConfiguration&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="nt">featureGates&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>&lt;span class="nt">MemoryQoS&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="kc">true&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="nt">memoryReservationPolicy&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="l">TieredReservation&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="nt">memoryThrottlingFactor&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="m">0.9&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>The overall Kubernetes recommendation is not to enable Alpha features in production; however, if you
+judge that memory QoS with tiered reservations is useful for your platform in production, make sure
+to test the configuration &lt;strong>and&lt;/strong> account for hard-reserved memory before you enable
+the &lt;code>TieredReservation&lt;/code> feature gate.
+See the
+&lt;a href="https://kubernetes.io/docs/concepts/workloads/pods/pod-qos/#memory-qos-with-cgroup-v2">Pod QoS&lt;/a> documentation
+for the current mapping of Kubernetes QoS classes to cgroup v2 controls.&lt;/p>
+&lt;h3 id="container-aware-oom-handling">Container-aware OOM handling&lt;a class="td-heading-self-link" href="#container-aware-oom-handling" aria-label="Heading self-link">&lt;/a>&lt;/h3>&lt;p>On cgroup v2 nodes, the kubelet defaults &lt;code>singleProcessOOMKill&lt;/code> to &lt;code>false&lt;/code>. It therefore sets
+&lt;code>memory.oom.group&lt;/code> for each container cgroup so that an OOM event kills all processes in that
+container together, rather than leaving a partially functioning multi-process container. Set
+&lt;code>singleProcessOOMKill: true&lt;/code> only if you need the cgroup v1-compatible behavior where the kernel
+may kill one process at a time. See the
+&lt;a href="https://kubernetes.io/docs/reference/config-api/kubelet-config.v1beta1/#kubelet-config-k8s-io-v1beta1-KubeletConfiguration">&lt;code>KubeletConfiguration&lt;/code> reference&lt;/a>
+for this setting.&lt;/p>
+&lt;p>This behavior is scoped to a container cgroup, not the whole Pod. Also, &lt;code>cgroup.kill&lt;/code> is a separate
+administrative interface: writing &lt;code>1&lt;/code> to it sends &lt;code>SIGKILL&lt;/code> to every process in that cgroup and its
+descendants; it does not configure OOM behavior. The cgroup v2 memory controller additionally
+provides &lt;code>memory.events&lt;/code> counters that monitoring systems and userspace OOM managers can observe.&lt;/p>
+&lt;h3 id="rootless-support">Rootless support&lt;a class="td-heading-self-link" href="#rootless-support" aria-label="Heading self-link">&lt;/a>&lt;/h3>&lt;p>In cgroup v1, delegating controllers to less privileged containers may be dangerous.&lt;/p>
+&lt;p>Unlike cgroup v1, cgroup v2 officially supports delegation.
+Most implementations of rootless containers rely on systemd for
+delegating v2 controllers to non-root users.&lt;/p>
+&lt;p>This delegation mechanism is separate from Kubernetes Pod user namespaces, which map container
+users to unprivileged host users. &lt;a href="https://kubernetes.io/docs/concepts/workloads/pods/user-namespaces/">Pod user namespace support&lt;/a>
+graduated to stable in Kubernetes v1.36; check its filesystem, kernel, CRI runtime, and OCI runtime
+prerequisites before enabling it.&lt;/p>
+&lt;h3 id="what-else">What else?&lt;a class="td-heading-self-link" href="#what-else" aria-label="Heading self-link">&lt;/a>&lt;/h3>&lt;ol>
+&lt;li>eBPF stories:
+&lt;ul>
+&lt;li>In cgroup v1, device access controls are exposed through interface files.&lt;/li>
+&lt;li>The cgroup v2 device controller has no interface files, and is implemented on top of cgroup BPF.&lt;/li>
+&lt;li>Cilium attaches BPF cgroup programs for socket-based load balancing. Its
+&lt;a href="https://docs.cilium.io/en/stable/network/kubernetes/kubeproxy-free/#validate-bpf-cgroup-programs-attachment">default cgroup root&lt;/a>
+is &lt;code>/run/cilium/cgroupv2&lt;/code>.&lt;/li>
+&lt;/ul>
+&lt;/li>
+&lt;li>&lt;a href="https://kubernetes.io/docs/reference/instrumentation/understand-psi-metrics/">Pressure Stall Information (PSI)&lt;/a>
+reports CPU, memory, and I/O contention at node, Pod, and container level. On supported
+clusters, the kubelet exposes PSI by default (&lt;code>KubeletPSI&lt;/code> is stable and locked on). PSI
+requires cgroup v2, Linux 4.20 or later, &lt;code>CONFIG_PSI=y&lt;/code>, and a kernel not booted with
+&lt;code>psi=0&lt;/code>. The kubelet surfaces the data through the
+&lt;a href="https://kubernetes.io/docs/reference/instrumentation/node-metrics/#summary-api-source">Summary API&lt;/a> and
+&lt;code>/metrics/cadvisor&lt;/code>.&lt;/li>
+&lt;li>When migrating, update software that reads the cgroup filesystem directly. The
+&lt;a href="https://kubernetes.io/docs/concepts/architecture/cgroups/#migrating-cgroupv2">migration guidance&lt;/a> recommends
+cAdvisor v0.43.0 or later and lists compatible Java, Node.js, and &lt;code>automaxprocs&lt;/code> versions.&lt;/li>
+&lt;/ol>
+&lt;h3 id="cpu-weight-conversion-in-newer-oci-runtimes">CPU weight conversion in newer OCI runtimes&lt;a class="td-heading-self-link" href="#cpu-weight-conversion-in-newer-oci-runtimes" aria-label="Heading self-link">&lt;/a>&lt;/h3>&lt;p>cgroup v1 uses &lt;code>cpu.shares&lt;/code>, whereas cgroup v2 uses &lt;code>cpu.weight&lt;/code>. Newer OCI runtimes use an improved
+non-linear conversion that preserves the default priority and gives small CPU requests more usable
+granularity. The change is implemented in the OCI runtime rather than Kubernetes: it is available
+in crun v1.23 and runc v1.3.2. After upgrading a runtime, monitoring or policy tools that predict
+exact &lt;code>cpu.weight&lt;/code> values may need updates. Read
+&lt;a href="https://kubernetes.io/blog/2026/01/30/new-cgroup-v1-to-v2-cpu-conversion-formula/">New Conversion from cgroup v1 CPU Shares to v2 CPU Weight&lt;/a>
+for the formula, examples, and compatibility considerations.&lt;/p>
+&lt;h3 id="in-place-resource-updates">In-place resource updates&lt;a class="td-heading-self-link" href="#in-place-resource-updates" aria-label="Heading self-link">&lt;/a>&lt;/h3>&lt;p>&lt;a href="https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-resize-inplace">In-place Pod vertical scaling&lt;/a>
+graduated to stable in Kubernetes v1.35. Kubernetes v1.36 then [enabled]
+(/blog/2026/04/30/kubernetes-v1-36-inplace-pod-level-resources-beta/)
+in-place vertical scaling for Pod-level resources
+by default, as a Beta feature. The kubelet coordinates changes between the Pod-level and container
+cgroups so that increases create headroom before container limits grow, while decreases constrain
+containers before shrinking the Pod-level boundary. Accurate aggregate enforcement for this
+v1.36 feature requires cgroup v2.&lt;/p>
+&lt;h2 id="adopting-cgroup-version-2">Adopting cgroup version 2&lt;a class="td-heading-self-link" href="#adopting-cgroup-version-2" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;h3 id="requirements">Requirements&lt;a class="td-heading-self-link" href="#requirements" aria-label="Heading self-link">&lt;/a>&lt;/h3>&lt;p>Here's what you need to use cgroup v2 with Kubernetes.
+First up, you need to be using a version of Kubernetes with support for v2 cgroup management;
+that's been stable since Kubernetes v1.25 and all supported Kubernetes releases include this support.&lt;/p>
+&lt;ul>
+&lt;li>You need at least one Linux node; cgroup is a Linux-only concept&lt;/li>
+&lt;li>Your OS install must run with cgroup v2 enabled&lt;/li>
+&lt;li>The kernel version must be 5.8 or later (5.9 or later is recommended when using memory QoS)&lt;/li>
+&lt;li>The container runtime must support cgroup v2. For example:
+&lt;ul>
+&lt;li>containerd v1.4 or later supports cgroup v2; use containerd v2.0 or later for automatic
+cgroup-driver discovery&lt;/li>
+&lt;li>CRI-O v1.20 or later&lt;/li>
+&lt;/ul>
+&lt;/li>
+&lt;li>The kubelet and the container runtime must both be configured to use the correct cgroup driver. See &lt;a href="https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/configure-cgroup-driver/">Configure the kubelet's cgroup driver to match the container runtime cgroup driver&lt;/a>.&lt;/li>
+&lt;/ul>
+&lt;p>For now, you can opt back in to use cgroup v1; the Kubernetes project recommends using cgroup v2, but in Kubernetes 1.36 (the current release) the cgroup v1 option remains
+supported as a fallback.
+That fallback is scheduled for removal in
+Kubernetes v1.38. If you are running an older cluster, plan to migrate; if you are setting
+up a new cluster with Linux nodes, you should prefer cgroup v2.
+In either case, review both the &lt;a href="https://kubernetes.io/docs/setup/production-environment/container-runtimes/#systemd-cgroup-driver">Kubernetes runtime documentation&lt;/a>
+and (if relevant) the &lt;a href="https://github.com/containerd/containerd/blob/main/RELEASES.md#kubernetes-support">containerd compatibility matrix&lt;/a>.&lt;/p>
+&lt;h4 id="kernel-updates-around-cgroup-v2">kernel updates around cgroup v2&lt;a class="td-heading-self-link" href="#kernel-updates-around-cgroup-v2" aria-label="Heading self-link">&lt;/a>&lt;/h4>&lt;p>When Kubernetes was first announced, in 2014, only v1 cgroup existed.
+Version 2 cgroup management first appeared in Linux kernel 4.5, released in 2016.&lt;/p>
+&lt;ul>
+&lt;li>In Linux 4.5, the cgroup v2 &lt;code>io&lt;/code>, &lt;code>memory&lt;/code>, and &lt;code>pids&lt;/code> controllers were supported.&lt;/li>
+&lt;li>Linux 4.15 added support for the cgroup v2 &lt;code>cpu&lt;/code> controller.&lt;/li>
+&lt;li>&lt;a href="https://docs.kernel.org/accounting/psi.html">Pressure Stall Information&lt;/a> (PSI) support began with Linux 4.20.&lt;/li>
+&lt;li>The Kubernetes project does not recommend using cgroup v2 with a Linux kernel older than 5.2
+due to lack of cgroup-level task freezer support.&lt;/li>
+&lt;li>Kubernetes documents 5.8 as the minimum kernel version for cgroup v2; the root cgroup's
+system-level &lt;code>cpu.stat&lt;/code> file was added in Linux 5.8.&lt;/li>
+&lt;li>The &lt;code>memory.high&lt;/code> livelock fix used by Memory QoS is present in Linux 5.9 and later.&lt;/li>
+&lt;li>&lt;code>memory.peak&lt;/code> was added in Linux 5.19.&lt;/li>
+&lt;/ul>
+&lt;h3 id="cgroup-driver-configuration">cgroup driver configuration&lt;a class="td-heading-self-link" href="#cgroup-driver-configuration" aria-label="Heading self-link">&lt;/a>&lt;/h3>&lt;p>&lt;a href="https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/configure-cgroup-driver/">Configure the kubelet's cgroup driver to match the container runtime cgroup driver&lt;/a>.&lt;/p>
+&lt;p>If you use &lt;code>kubeadm&lt;/code> to manage your cluster, Kubernetes recommends that you use the &lt;code>systemd&lt;/code> cgroup driver,
+because &lt;code>kubeadm&lt;/code> manages the kubelet as a systemd service. For other management tooling,
+check the documentation for the tool you're using to manage your cluster.&lt;/p>
+&lt;p>If you can pick either option, I recommend using the systemd driver.&lt;/p>
+&lt;p>Whatever tooling you've chosen, the kubelet automatically tries to detect the runtime's recommended cgroup driver.
+This automatic detection relies on using a runtime
+that implements the &lt;code>RuntimeConfig&lt;/code>
+CRI RPC (for example: containerd v2.0+ or CRI-O v1.28+).&lt;/p>
+&lt;p>If you're using a container runtime that supports cgroup v2 but doesn't support automatic cgroup driver detection,
+you can manually configure an override by editing
+the kubelet configuration file. For example:&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-yaml" data-lang="yaml">&lt;span class="line">&lt;span class="cl">&lt;span class="nt">apiVersion&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="l">kubelet.config.k8s.io/v1beta1&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="nt">kind&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="l">KubeletConfiguration&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="nt">cgroupDriver&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="l">systemd&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>Automatic discovery of the runtime's cgroup driver through the CRI, tracked by
+&lt;a href="https://www.kubernetes.dev/resources/keps/4033">KEP-4033&lt;/a>, graduated to stable in Kubernetes v1.34. It requires a runtime
+that implements the &lt;code>RuntimeConfig&lt;/code> CRI RPC (containerd v2.0+ or CRI-O v1.28+). When available,
+the kubelet uses the value reported by the runtime instead of its configured &lt;code>cgroupDriver&lt;/code> value.&lt;/p>
+&lt;h3 id="tools-and-commands-for-troubleshooting">Tools and commands for troubleshooting&lt;a class="td-heading-self-link" href="#tools-and-commands-for-troubleshooting" aria-label="Heading self-link">&lt;/a>&lt;/h3>&lt;p>Tools and commands that you should know about cgroups:&lt;/p>
+&lt;ul>
+&lt;li>&lt;code>stat -fc %T /sys/fs/cgroup/&lt;/code>: Check whether cgroup v2 is enabled; it returns &lt;code>cgroup2fs&lt;/code>.&lt;/li>
+&lt;li>&lt;code>systemctl list-units 'kube*' --type=slice&lt;/code> or &lt;code>--type=scope&lt;/code>: List Kubernetes-related units
+that systemd currently has in memory.&lt;/li>
+&lt;li>&lt;code>bpftool cgroup list /sys/fs/cgroup/*&lt;/code>: List all programs attached to the cgroup CGROUP.&lt;/li>
+&lt;li>&lt;code>systemd-cgls /sys/fs/cgroup/*&lt;/code>: Recursively show control group contents.&lt;/li>
+&lt;li>&lt;code>systemd-cgtop&lt;/code>: Show top control groups by their resource usage.&lt;/li>
+&lt;li>&lt;code>tree -L 2 -d /sys/fs/cgroup/kubepods.slice&lt;/code>: Show Pods' related cgroups directories.&lt;/li>
+&lt;/ul>
+&lt;h4 id="how-to-check-if-a-pod-cpu-or-memory-limit-is-successfully-applied-to-the-cgroup-file">How to check if a Pod CPU or memory limit is successfully applied to the cgroup file?&lt;a class="td-heading-self-link" href="#how-to-check-if-a-pod-cpu-or-memory-limit-is-successfully-applied-to-the-cgroup-file" aria-label="Heading self-link">&lt;/a>&lt;/h4>&lt;p>Work from the API object down to the node. Identify the node, then compare
+desired resources in the spec with the enacted values in status (in-place
+resize can leave those out of sync):&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-bash" data-lang="bash">&lt;span class="line">&lt;span class="cl">kubectl get pod &amp;lt;pod-name&amp;gt; -n &amp;lt;namespace&amp;gt; &lt;span class="se">\
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="se">&lt;/span> -o &lt;span class="nv">jsonpath&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s1">&amp;#39;{.spec.nodeName}{&amp;#34;\n&amp;#34;}&amp;#39;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">kubectl get pod &amp;lt;pod-name&amp;gt; -n &amp;lt;namespace&amp;gt; &lt;span class="se">\
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="se">&lt;/span> -o &lt;span class="nv">jsonpath&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s1">&amp;#39;{range .spec.containers[*]}{.name}{&amp;#34; spec\t&amp;#34;}{.resources}{&amp;#34;\n&amp;#34;}{end}&amp;#39;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">kubectl get pod &amp;lt;pod-name&amp;gt; -n &amp;lt;namespace&amp;gt; &lt;span class="se">\
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="se">&lt;/span> -o &lt;span class="nv">jsonpath&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s1">&amp;#39;{range .status.containerStatuses[*]}{.name}{&amp;#34; status\t&amp;#34;}{.resources}{&amp;#34;\n&amp;#34;}{end}&amp;#39;&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>On that node, as root, with the systemd cgroup driver and cgroup v2 (these
+snippets also need &lt;code>jq&lt;/code>). Pin the container with kubelet labels; a container
+name alone is not unique on a node. Use &lt;code>crictl ps -a&lt;/code> if the container is
+not running:&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-bash" data-lang="bash">&lt;span class="line">&lt;span class="cl">&lt;span class="nv">CONTAINER_ID&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="k">$(&lt;/span>crictl ps &lt;span class="se">\
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="se">&lt;/span> --label io.kubernetes.pod.namespace&lt;span class="o">=&lt;/span>&amp;lt;namespace&amp;gt; &lt;span class="se">\
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="se">&lt;/span> --label io.kubernetes.pod.name&lt;span class="o">=&lt;/span>&amp;lt;pod-name&amp;gt; &lt;span class="se">\
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="se">&lt;/span> --name &amp;lt;container-name&amp;gt; -q &lt;span class="p">|&lt;/span> head -n1&lt;span class="k">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># OCI view (not the CRI protobuf field names)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">crictl inspect &lt;span class="s2">&amp;#34;&lt;/span>&lt;span class="nv">$CONTAINER_ID&lt;/span>&lt;span class="s2">&amp;#34;&lt;/span> &lt;span class="p">|&lt;/span> jq &lt;span class="s1">&amp;#39;.info.runtimeSpec.linux.resources&amp;#39;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># Kernel cgroup path for this container&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="nv">PID&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="k">$(&lt;/span>crictl inspect &lt;span class="s2">&amp;#34;&lt;/span>&lt;span class="nv">$CONTAINER_ID&lt;/span>&lt;span class="s2">&amp;#34;&lt;/span> &lt;span class="p">|&lt;/span> jq -r &lt;span class="s1">&amp;#39;.info.pid&amp;#39;&lt;/span>&lt;span class="k">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="nv">CGROUP&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s2">&amp;#34;/sys/fs/cgroup&lt;/span>&lt;span class="k">$(&lt;/span>awk -F: &lt;span class="s1">&amp;#39;$1==&amp;#34;0&amp;#34;{print $3}&amp;#39;&lt;/span> /proc/&lt;span class="nv">$PID&lt;/span>/cgroup&lt;span class="k">)&lt;/span>&lt;span class="s2">&amp;#34;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">cat &lt;span class="s2">&amp;#34;&lt;/span>&lt;span class="nv">$CGROUP&lt;/span>&lt;span class="s2">/cpu.weight&amp;#34;&lt;/span> &lt;span class="c1"># request.cpu → shares → weight; not a limit&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">cat &lt;span class="s2">&amp;#34;&lt;/span>&lt;span class="nv">$CGROUP&lt;/span>&lt;span class="s2">/cpu.max&amp;#34;&lt;/span> &lt;span class="c1"># limit.cpu as &amp;#34;quota period&amp;#34;; unlimited is &amp;#34;max &amp;lt;period&amp;gt;&amp;#34;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">cat &lt;span class="s2">&amp;#34;&lt;/span>&lt;span class="nv">$CGROUP&lt;/span>&lt;span class="s2">/memory.max&amp;#34;&lt;/span> &lt;span class="c1"># limit.memory; unlimited is &amp;#34;max&amp;#34;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># Pod-level cgroup (parent slice), used by Pod-level resources&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">cat &lt;span class="s2">&amp;#34;&lt;/span>&lt;span class="k">$(&lt;/span>dirname &lt;span class="s2">&amp;#34;&lt;/span>&lt;span class="nv">$CGROUP&lt;/span>&lt;span class="s2">&amp;#34;&lt;/span>&lt;span class="k">)&lt;/span>&lt;span class="s2">/cpu.max&amp;#34;&lt;/span> &lt;span class="s2">&amp;#34;&lt;/span>&lt;span class="k">$(&lt;/span>dirname &lt;span class="s2">&amp;#34;&lt;/span>&lt;span class="nv">$CGROUP&lt;/span>&lt;span class="s2">&amp;#34;&lt;/span>&lt;span class="k">)&lt;/span>&lt;span class="s2">/memory.max&amp;#34;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># Present when MemoryQoS is enabled&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">cat &lt;span class="s2">&amp;#34;&lt;/span>&lt;span class="nv">$CGROUP&lt;/span>&lt;span class="s2">/memory.high&amp;#34;&lt;/span> &lt;span class="s2">&amp;#34;&lt;/span>&lt;span class="nv">$CGROUP&lt;/span>&lt;span class="s2">/memory.min&amp;#34;&lt;/span> &lt;span class="s2">&amp;#34;&lt;/span>&lt;span class="nv">$CGROUP&lt;/span>&lt;span class="s2">/memory.low&amp;#34;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="nv">SCOPE&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="k">$(&lt;/span>basename &lt;span class="s2">&amp;#34;&lt;/span>&lt;span class="nv">$CGROUP&lt;/span>&lt;span class="s2">&amp;#34;&lt;/span>&lt;span class="k">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">systemctl show &lt;span class="s2">&amp;#34;&lt;/span>&lt;span class="nv">$SCOPE&lt;/span>&lt;span class="s2">&amp;#34;&lt;/span> &lt;span class="se">\
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="se">&lt;/span> -p CPUWeight -p CPUQuotaPerSecUSec -p CPUQuotaPeriodUSec -p MemoryMax
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>Do not treat &lt;code>info.runtimeSpec.linux.cgroupsPath&lt;/code> as a filesystem path when
+the runtime uses the systemd driver; that value is a systemd unit path
+(&lt;code>slice:runtime:id&lt;/code>), not a directory under &lt;code>/sys/fs/cgroup&lt;/code>.&lt;/p>
+&lt;p>Expected mapping at each layer:&lt;/p>
+&lt;ul>
+&lt;li>Kubernetes: &lt;code>spec.containers[*].resources&lt;/code> (desired) and
+&lt;code>status.containerStatuses[*].resources&lt;/code> (enacted after in-place resize).
+Pod-level resources are on &lt;code>spec.resources&lt;/code> and the parent pod slice.&lt;/li>
+&lt;li>CRI (kubelet → runtime; these protobuf names stay cgroup v1-style even on
+v2): &lt;code>cpu_shares&lt;/code>, &lt;code>cpu_quota&lt;/code>, &lt;code>cpu_period&lt;/code>, &lt;code>memory_limit_in_bytes&lt;/code>, plus
+&lt;code>unified&lt;/code> for Memory QoS. &lt;code>crictl inspect&lt;/code> does not show these names; it
+shows the OCI spec the runtime derived from them.&lt;/li>
+&lt;li>OCI spec: &lt;code>linux.resources.cpu.{shares,quota,period}&lt;/code>,
+&lt;code>linux.resources.memory.limit&lt;/code>, and &lt;code>linux.resources.unified&lt;/code>. The runtime
+converts shares, quota, and period into cgroup v2 files. After upgrading
+crun or runc, the shares-to-weight formula may change; see
+&lt;a href="#cpu-weight-conversion-in-newer-oci-runtimes">CPU weight conversion&lt;/a>.&lt;/li>
+&lt;li>systemd scope: &lt;code>CPUWeight&lt;/code>, &lt;code>CPUQuotaPerSecUSec&lt;/code>, &lt;code>CPUQuotaPeriodUSec&lt;/code>,
+&lt;code>MemoryMax&lt;/code>. Unlimited or unset values often appear as &lt;code>[not set]&lt;/code> or
+infinity.&lt;/li>
+&lt;li>cgroupfs: &lt;code>cpu.weight&lt;/code> (from CPU request; an unset request still yields the
+default of 2 shares), &lt;code>cpu.max&lt;/code>, and &lt;code>memory.max&lt;/code> on the container scope.
+Memory QoS adds &lt;code>memory.high&lt;/code>, &lt;code>memory.min&lt;/code>, and &lt;code>memory.low&lt;/code>.&lt;/li>
+&lt;/ul>
+&lt;h2 id="further-reading">Further reading&lt;a class="td-heading-self-link" href="#further-reading" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;ul>
+&lt;li>&lt;a href="https://kubernetes.io/blog/2024/08/14/kubernetes-1-31-moving-cgroup-v1-support-maintenance-mode/">Kubernetes 1.31: Moving cgroup v1 Support into Maintenance Mode&lt;/a>&lt;/li>
+&lt;li>&lt;a href="https://kubernetes.io/blog/2026/04/29/kubernetes-v1-36-memory-qos-tiered-protection/">Kubernetes v1.36: Tiered Memory Protection with Memory QoS&lt;/a>&lt;/li>
+&lt;li>&lt;a href="https://kubernetes.io/blog/2026/05/12/kubernetes-v1-36-psi-metrics-ga/">Kubernetes v1.36: PSI Metrics for Kubernetes Graduates to GA&lt;/a>&lt;/li>
+&lt;li>&lt;a href="https://kubernetes.io/blog/2022/08/31/cgroupv2-ga-1-25/">Kubernetes 1.25: cgroup v2 graduates to GA&lt;/a>&lt;/li>
+&lt;li>KubeCon NA 2022 &lt;a href="https://www.youtube.com/watch?v=WxZK-UXKvXk">cgroup v2: Before You Jump In&lt;/a> by Tony Gosselin &amp;amp; Mike Tougeron, Adobe Systems&lt;/li>
+&lt;li>KubeCon NA 2022 &lt;a href="https://www.youtube.com/watch?v=sgyFCp1CRhA">Cgroupv2 Is Coming Soon To a Cluster Near You&lt;/a> - David Porter, Google &amp;amp; Mrunal Patel, RedHat&lt;/li>
+&lt;li>KubeCon EU 2020 &lt;a href="https://www.youtube.com/watch?v=u8h0e84HxcE&amp;t=783s">Kubernetes On cgroup v2&lt;/a> by Giuseppe Scrivano, Red Hat.&lt;/li>
+&lt;li>This blog only covers the basic requirements and configuration of Kubernetes components.
+It will not include how to enable cgroup fs in OS distributions.
+For migration, you can refer to &lt;a href="https://kubernetes.io/docs/concepts/architecture/cgroups/#migrating-cgroupv2">migrating cgroup v2&lt;/a>&lt;/li>
+&lt;/ul></description></item>
+<item><title>Scaling Kubernetes Workloads with Node Swap</title><link>https://kubernetes.io/blog/2026/10/05/scaling-kubernetes-workloads-with-node-swap/</link><pubDate>Mon, 05 Oct 2026 10:00:00 -0800</pubDate><guid>https://kubernetes.io/blog/2026/10/05/scaling-kubernetes-workloads-with-node-swap/</guid><description>
+&lt;p>Memory is often the first hard limit a Kubernetes cluster hits.
+Nodes run out of RAM long before they run out of CPU, and the new wave of agentic AI workloads makes this worse.
+These workloads demand large memory footprints to start up and run untrusted code, then sit idle waiting for the next prompt.
+That idle but resident memory is expensive, and it caps how many pods a node can hold. This is where swap helps. Kubernetes support for running nodes with swap enabled reached General Availability in v1.34, and by backing that swap with fast NVMe solid state drives (SSDs), a node can page out dormant memory and pack in far more pods.
+This post explains how we benchmarked that approach across three workloads, including CI/CD kernel builds, sandboxed headless browsers, and isolated Python runtimes; we found density gains of up to 3×, often with little or no latency cost.&lt;/p>
+&lt;h2 id="the-node-density-problem">The node density problem&lt;a class="td-heading-self-link" href="#the-node-density-problem" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>The Kubernetes ecosystem has reached a fundamental physical resource constraint: the strict limits of hardware memory versus the growing demand for dynamic, bursty workloads in the new agentic era.&lt;/p>
+&lt;p>Historically, administrators provisioning memory-intensive workloads encountered a persistent dilemma: set memory limits too high and you waste expensive infrastructure on idle RAM; set them too low and you risk Out-Of-Memory (OOM) kills.&lt;/p>
+&lt;p>This conflict is amplified when deploying autonomous AI agents using secure execution environments like the &lt;a href="https://github.com/kubernetes-sigs/agent-sandbox">&lt;code>agent-sandbox&lt;/code>&lt;/a> framework. These agentic pods require large memory footprints to initialize and execute untrusted code. However, after their burst of activity, they typically enter long-tail idle phases waiting for user prompts. Keeping this idle state in physical RAM caps cluster density and makes AI infrastructure expensive to run.&lt;/p>
+&lt;h2 id="the-solution-kubernetes-node-swap">The solution: Kubernetes node swap&lt;a class="td-heading-self-link" href="#the-solution-kubernetes-node-swap" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>With the introduction of Kubernetes' support for running nodes with swap enabled (which reached General Availability in v1.34), this paradigm shifts. By enabling the Linux kernel to page out anonymous memory to disk, &lt;em>node swap&lt;/em> acts as a shock absorber during traffic spikes or periods of heavy memory oversubscription.&lt;/p>
+&lt;p>Historically, swap was discouraged in Kubernetes for two reasons. The first was memory accounting. Under cgroup v1, the controls treated memory and swap as a single combined limit rather than letting operators set an independent limit for disk swap. Without independent tracking, a process could page large amounts of anonymous memory out to disk, which made a container's real memory usage unpredictable and hard to isolate. Kubernetes' swap support resolves this by relying on cgroup v2, whose separate swap accounting tracks disk swap on its own. The second reason was the latency penalty of paging to slow spinning disks, which fast NVMe Local SSDs largely eliminate. Together, these make it practical to increase pod density and buffer against memory spikes without sacrificing cluster stability.&lt;/p>
+&lt;h2 id="the-benchmark-data">The benchmark data&lt;a class="td-heading-self-link" href="#the-benchmark-data" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>To quantify the performance boundaries and cost-saving potential of Local SSD-backed node swap, this analysis covers three distinct workload categories: a Traditional Build Workload for CI/CD pipelines, High-Density Browser Sandboxes, and Isolated Python Sandboxes.&lt;/p>
+&lt;table>
+&lt;thead>
+&lt;tr>
+&lt;th>Workload Profile&lt;/th>
+&lt;th>Baseline Capacity (No Swap)&lt;/th>
+&lt;th>Local SSD Swap Capacity&lt;/th>
+&lt;th>Density Improvement&lt;/th>
+&lt;/tr>
+&lt;/thead>
+&lt;tbody>
+&lt;tr>
+&lt;td>&lt;strong>Linux CI/CD Kernel Build&lt;/strong>&lt;/td>
+&lt;td>600 MB RAM Limit&lt;/td>
+&lt;td>300 MB RAM Limit&lt;/td>
+&lt;td>&lt;strong>-50% RAM Footprint&lt;/strong>&lt;/td>
+&lt;/tr>
+&lt;tr>
+&lt;td>&lt;strong>Headless Chrome (Kata)&lt;/strong>&lt;/td>
+&lt;td>40 Concurrent Pods&lt;/td>
+&lt;td>50 Concurrent Pods&lt;/td>
+&lt;td>&lt;strong>+25% Pod Density&lt;/strong>&lt;/td>
+&lt;/tr>
+&lt;tr>
+&lt;td>&lt;strong>Headless Chrome (gVisor)&lt;/strong>&lt;/td>
+&lt;td>80 Concurrent Pods&lt;/td>
+&lt;td>160 Concurrent Pods&lt;/td>
+&lt;td>&lt;strong>+100% Pod Density&lt;/strong>&lt;/td>
+&lt;/tr>
+&lt;tr>
+&lt;td>&lt;strong>Python Sandbox (gVisor)&lt;/strong>&lt;/td>
+&lt;td>80 Concurrent Pods&lt;/td>
+&lt;td>240 Concurrent Pods&lt;/td>
+&lt;td>&lt;strong>+200% Pod Density&lt;/strong>&lt;/td>
+&lt;/tr>
+&lt;/tbody>
+&lt;/table>
+&lt;h3 id="1-traditional-workload-linux-kernel-build">1. Traditional workload: Linux kernel build&lt;a class="td-heading-self-link" href="#1-traditional-workload-linux-kernel-build" aria-label="Heading self-link">&lt;/a>&lt;/h3>&lt;p>Before exploring specialized agentic architectures, swap was validated against classic batch workloads by running a complete &lt;a href="https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git/tag/?h=v6.1.1">Linux 6.1.1 kernel&lt;/a> build. The kernel compilation process leverages concurrent worker threads, balloons in memory to hold compiled object files, and requires a large memory spike during the brief linking phase.&lt;/p>
+&lt;p>This workload mirrors the memory behavior of enterprise CI/CD pipelines. Because earlier compiled objects sit inactive in memory while the pipeline progresses, CI/CD jobs frequently hoard unused physical RAM, which makes them well suited to node swap compression.&lt;/p>
+&lt;p>On a baseline node without swap, the minimum memory limit to prevent an OOM crash during compilation was 600 MB. Routing swap to a Local SSD cut the container memory limit by 50% to 300 MB without incurring any execution slowdown (in fact, it ran cleanly in 374s vs the baseline 433s). However, as an explicit tradeoff, compressing the limit further to 200 MB forced the active working set into swap, causing long I/O wait times and increasing execution time by over 40%. This reinforces that swap serves as an insurance policy for burst memory, not a replacement for active RAM.&lt;/p>
+&lt;h3 id="2-high-density-agent-workloads-headless-browser-runtimes">2. High-density agent workloads: headless browser runtimes&lt;a class="td-heading-self-link" href="#2-high-density-agent-workloads-headless-browser-runtimes" aria-label="Heading self-link">&lt;/a>&lt;/h3>&lt;p>AI agent workloads frequently require manipulating headless browsers via Chromium. However, trusting external code execution often requires stricter security isolation than standard Linux namespaces. This benchmark cross-evaluated several container runtime environments. The raw logs and testing methodologies for the default runtime are available in the &lt;a href="https://github.com/kubernetes-sigs/agent-sandbox/tree/main/examples/gke-swap">Agent Sandbox GKE Swap directory&lt;/a>.&lt;/p>
+&lt;ul>
+&lt;li>&lt;strong>Unsandboxed baseline limits (&lt;code>runc&lt;/code>):&lt;/strong> To test the limits of the environment without the overhead of security runtimes, plain runc containers were swept on a c4-standard-32 node (32 vCPU, 120 GB RAM). Without swap, the node exhausted physical memory and failed past 512 pods. Enabling Local SSD swap allowed the node to support 768 concurrent pods.&lt;/li>
+&lt;li>&lt;strong>Advanced security runtimes (for example: gVisor, Kata Containers):&lt;/strong> Enabling strict security sandboxing increases memory overhead and normally reduces pod density. However, memory swap naturally absorbs this overhead penalty. Without swap, a gVisor environment hit a hard limit at 80 pods. Local SSD swap doubled that capacity, which allowed 160 concurrent gVisor pods on a single node. Similarly, Kata Containers microVMs exhausted physical RAM at 40 concurrent pods without swap, but using GCP Local SSD swap expanded this to 50 stable Kata microVMs before CPU saturation.&lt;/li>
+&lt;/ul>
+&lt;p>At these maximum densities, the per-pod latency increase is driven mainly by pods competing for CPU, not by swap I/O. An operator tuning for a specific latency target would run at a lower density than the peak numbers here and see a proportionally smaller latency cost.&lt;/p>
+&lt;p>For a comprehensive architectural breakdown and density metrics for gVisor and Kata, see the &lt;a href="https://github.com/kubernetes-sigs/agent-sandbox/tree/main/examples/gke-swap/runtimes">Agent Sandbox GKE Swap Runtimes directory&lt;/a>.&lt;/p>
+&lt;h3 id="3-beyond-browsers-sandboxed-python-runtimes">3. Beyond browsers: sandboxed Python runtimes&lt;a class="td-heading-self-link" href="#3-beyond-browsers-sandboxed-python-runtimes" aria-label="Heading self-link">&lt;/a>&lt;/h3>&lt;p>The advantages of node swap also extend to untrusted, isolated code-execution environments.
+This sweep deployed simultaneous Python sandbox sessions analyzing 5 million rows of data from the MovieLens 20M dataset, requiring a ≃375 MiB resident memory footprint per execution.
+The in-depth scaling results and deployment code for this sweep can be reviewed in the &lt;a href="https://github.com/kubernetes-sigs/agent-sandbox/tree/main/examples/gke-swap/python-density">Agent Sandbox GKE Swap Python Density directory&lt;/a>.&lt;/p>
+&lt;p>Without swap, heavy concurrent bursts exhausted physical memory, causing the node to hit a hard RAM limit and fail at 80 concurrent sessions.
+Enabling Local SSD swap offloaded dormant anonymous memory, freeing up physical RAM and preserving the node's page cache.
+This allowed the node to scale to 240 concurrently isolated Python sandboxes—a 3× density improvement.
+As with the browser workloads, the latency rise at peak density comes mainly from the sandboxes competing for CPU rather than from swap itself.&lt;/p>
+&lt;figure>
+&lt;img src="https://kubernetes.io/blog/2026/10/05/scaling-kubernetes-workloads-with-node-swap/node-swap-chart.svg"/> &lt;figcaption>
+&lt;h4>Density Benchmarks with and without Node Swap&lt;/h4>
+&lt;/figcaption>
+&lt;/figure>
+&lt;h2 id="how-to-use-it">How to use it&lt;a class="td-heading-self-link" href="#how-to-use-it" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>If you manage Kubernetes infrastructure for developer environments, browser testing farms, JVM applications, or AI execution runtimes, leveraging Local SSD swap can multiply your density efficiency.&lt;/p>
+&lt;p>In Kubernetes v1.34+, node swap is Generally Available. You enable it via the kubelet configuration:&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-yaml" data-lang="yaml">&lt;span class="line">&lt;span class="cl">&lt;span class="nt">kind&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="l">KubeletConfiguration&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="nt">apiVersion&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="l">kubelet.config.k8s.io/v1beta1&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="nt">failSwapOn&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="kc">false&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="nt">memorySwap&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>&lt;span class="nt">swapBehavior&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="l">LimitedSwap&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>Pairing this upstream configuration with your cloud provider's high-speed local disk gives you dynamic memory balancing. For example, this is natively supported on Google Kubernetes Engine via &lt;a href="https://docs.cloud.google.com/kubernetes-engine/docs/how-to/node-memory-swap">Node Memory Swap&lt;/a> configured on Local SSD profiles.&lt;/p>
+&lt;p>To get the benefits, configure your workloads with Burstable QoS: set your container's memory limits higher than its requests. The node automatically rations fast swap space based on idle application memory usage while keeping active processes responsive.&lt;/p>
+&lt;h2 id="conclusion">Conclusion&lt;a class="td-heading-self-link" href="#conclusion" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>As the Kubernetes ecosystem transitions into the agentic era, administrators face a growing conflict between finite hardware memory limits and the bursty behavior of AI workloads. Frameworks like Agent Sandbox provide the security isolation required for running untrusted agents, but that isolation traditionally demands large amounts of idle memory overhead.&lt;/p>
+&lt;p>By configuring the kubelet with &lt;code>LimitedSwap&lt;/code> and routing it to Local SSDs, you can mitigate this conflict. Fast swap offloads the dormant states of idle agents, allowing you to increase pod density and node utilization on the same infrastructure without compromising security boundaries.&lt;/p></description></item>
+<item><title>Spotlight on SIG Apps</title><link>https://kubernetes.io/blog/2026/09/22/sig-apps-spotlight/</link><pubDate>Tue, 22 Sep 2026 10:00:00 -0800</pubDate><guid>https://kubernetes.io/blog/2026/09/22/sig-apps-spotlight/</guid><description>
+&lt;p>As Kubernetes adoption has grown, the conversation has shifted beyond running containers to managing increasingly complex application lifecycles. Modern platforms support stateless web services, stateful databases, batch processing, AI workloads, and platform services. At the same time, they must remain reliable during upgrades, scaling events, and infrastructure failures.&lt;/p>
+&lt;p>Every Kubernetes user relies on SIG Apps, whether they realize it or not. Deployments, StatefulSets, DaemonSets, Jobs, and CronJobs form the foundation of how applications are deployed, updated, scaled, and operated across the Kubernetes ecosystem.&lt;/p>
+&lt;p>SIG Apps is focused on improving workload resilience, refining application lifecycle management, and addressing the operational challenges that emerge when applications encounter node failures, rollout disruptions, and increasingly complex infrastructure environments.&lt;/p>
+&lt;p>In this spotlight, we sit down with two of the three SIG Apps chairs &lt;a href="https://github.com/janetkuo">&lt;strong>Janet Kuo&lt;/strong>&lt;/a> and &lt;a href="https://github.com/soltysh">&lt;strong>Maciej Szulik&lt;/strong>&lt;/a> to discuss the evolution of Kubernetes workload management, the challenges of balancing application reliability with operational simplicity, and the future of application lifecycle management within one of Kubernetes’ most influential Special Interest Groups.&lt;/p>
+&lt;h2 id="introducing-sig-apps">Introducing SIG Apps&lt;a class="td-heading-self-link" href="#introducing-sig-apps" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>&lt;strong>Natalie Fisher: Can you introduce yourself, your role, and how you got involved in SIG Apps?&lt;/strong>&lt;/p>
+&lt;p>Janet Kuo: I'm a Senior Staff Software Engineer at Google and have been a Kubernetes maintainer since 2015, joining the community just as we were racing toward the 1.0 launch. In those early days, my focus was on building the core Workloads API, specifically developing controllers like Deployment, ReplicaSet, StatefulSet, and DaemonSet, defining their rollout behaviors, and bringing them from initial designs to GA. That hands-on work was my entry point into SIG Apps.&lt;/p>
+&lt;p>Since then, I've stayed deeply involved in both the technical and community sides of Kubernetes. I have led SIG Apps as Co-Chair and Tech Lead since 2019. Currently, in addition to maintaining the workloads API, I am driving new subprojects like the &lt;a href="https://github.com/kubernetes-sigs/agent-sandbox">Agent Sandbox&lt;/a> to ensure Kubernetes is ready for next-generation agentic and AI workloads.&lt;/p>
+&lt;p>Maciej Szulik: I started contributing to Kubernetes all the way &lt;a href="https://github.com/kubernetes/kubernetes/pull/3065">back in 2014&lt;/a>. Since then, I've worked across various areas of the project: controllers, kubectl, and apimachinery, which eventually led me to become one of the Chairs and Tech Leads for SIG Apps. My current focus is reliability of the workload controllers under the SIG Apps umbrella and stability and ease of use of kubectl as part of my SIG CLI Tech Lead role. I also care about overall community health and growth as part of my Steering Committee role. Outside of Kubernetes, I work as a Staff Platform Engineer at Defense Unicorns, where I'm helping make Kubernetes more airgap-native with a project called &lt;a href="https://zarf.dev/">zarf&lt;/a>.&lt;/p>
+&lt;h2 id="the-problem-and-the-solution">The problem and the solution&lt;a class="td-heading-self-link" href="#the-problem-and-the-solution" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>SIG Apps is responsible for the core workload APIs that power how applications run on Kubernetes. From Deployments and StatefulSets to Jobs and CronJobs, these controllers determine how workloads are created, updated, scaled, and recovered when things go wrong.&lt;/p>
+&lt;p>As Kubernetes expands to support increasingly diverse workloads – including AI, batch processing, and large-scale distributed applications – SIG Apps continues to evolve these APIs while balancing reliability, backward compatibility, and operational simplicity.&lt;/p>
+&lt;p>&lt;strong>NF: For readers who may not be familiar, what is SIG Apps, and what role does it play within the broader Kubernetes ecosystem?&lt;/strong>&lt;/p>
+&lt;p>MS: SIG Apps is the Kubernetes Special Interest Group responsible for the workloads APIs. CronJob and Job help running batch workloads, whereas DaemonSet, Deployment, ReplicaSet, and StatefulSet serve the majority of other applications. More broadly, SIG Apps owns the layer most developers actually touch day-to-day: the controllers that turn a workload specification into running, self-healing pods. It's the group deciding how Deployments roll out, how Jobs retry, how DaemonSets place a pod per node.&lt;/p>
+&lt;p>JK: Adding to what Maciej described, as the industry shifts, we are seeing a massive demand to run complex, non-traditional workloads like distributed AI training, batch computing, and dynamic agent environments. Our role is expanding: we aren't just maintaining the classic workloads API, but we are actively evolving it and establishing new patterns (like the &lt;a href="https://github.com/kubernetes-sigs/agent-sandbox">Agent Sandbox&lt;/a>) to make sure Kubernetes remains the best platform for the next generation of workloads, such as AI.&lt;/p>
+&lt;p>&lt;strong>NF: Looking at the workload APIs owned by SIG Apps (Deployments, StatefulSets, DaemonSets, Jobs, and CronJobs), which areas are receiving the most attention from maintainers and contributors?&lt;/strong>&lt;/p>
+&lt;p>MS: After a long stretch focused on making batch workloads run smoothly on Kubernetes, we’ve shifted attention to make sure serving workloads (DaemonSets, StatefulSets, etc) aren’t left behind. This means performance and high-scale improvements to rollout and scaling behavior, plus working through our backlog of user-reported issues, prioritizing the ones with the strongest support from the user base.&lt;/p>
+&lt;h2 id="current-focus-areas">Current focus areas&lt;a class="td-heading-self-link" href="#current-focus-areas" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>As Kubernetes workloads grow in scale and complexity, the challenges facing workload controllers evolve as well. We asked the SIG Apps chairs where contributors are focusing their efforts today and which resilience problems they believe are the highest priorities.&lt;/p>
+&lt;p>&lt;strong>NF: From your perspective, what are the most important workload resilience problems SIG Apps is trying to solve today?&lt;/strong>&lt;/p>
+&lt;p>MS: Node lifecycle challenges have come up repeatedly across SIG Apps, SIG Node, and SIG Autoscaling discussions. DaemonSets and Jobs are just where the pain is most visible, since they're the workloads most directly bound to node state. Rather than solve it piecemeal within one SIG, we've settled on spinning up a dedicated &lt;a href="https://github.com/kubernetes/community/blob/main/wg-node-lifecycle/README.md">Node Lifecycle Working Group&lt;/a> to focus on this properly and hopefully land long-term solutions instead of one-off patches.&lt;/p>
+&lt;p>JK: From an AI perspective, resilience is critical. When you are running a massive distributed LLM training job that spans hundreds of GPUs, a single node failure can halt the entire pipeline. Similarly, if a DaemonSet that runs your logging or GPU monitoring agent gets stuck on a bad node, it impacts the entire cluster's health.&lt;/p>
+&lt;p>In addition to the work in the Node Lifecycle WG to handle infrastructure-level degradation, SIG Apps is addressing this at the orchestration layer through subprojects like &lt;a href="https://github.com/kubernetes-sigs/jobset/">JobSet&lt;/a> (for distributed training) and &lt;a href="https://github.com/kubernetes-sigs/lws/">LeaderWorkerSet (LWS)&lt;/a> (for sharded LLM inference). These APIs introduce patterns like &amp;quot;all-or-nothing&amp;quot; failure handling, where a single pod or job failure triggers a coordinated group-level restart to resume from the last clean checkpoint, rather than letting stuck workloads hang in an inconsistent state.&lt;/p>
+&lt;h2 id="real-world-impact">Real-world impact&lt;a class="td-heading-self-link" href="#real-world-impact" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>The work happening within SIG Apps extends far beyond controller implementations and API design. We wanted to understand what these improvements mean in practice for platform teams operating Kubernetes clusters in production.&lt;/p>
+&lt;p>&lt;strong>NF: For platform teams operating Kubernetes in production, what practical improvements would they notice if the node lifecycle and workload resilience work currently under discussion is successfully delivered?&lt;/strong>&lt;/p>
+&lt;p>MS: I’m mostly looking from the sidelines, the folks actually in the &lt;a href="https://github.com/kubernetes/community/blob/main/wg-node-lifecycle/README.md">Node Lifecycle Working Group&lt;/a> would give you a sharper answer. But from where I sit, I’m hoping their work translates into fewer 3am pages that turn out to be “a DaemonSet rollout got stuck because node X was flaky, and someone had to manually cordon/delete/restart to unstick it.”&lt;/p>
+&lt;p>JK: +1 to what Maciej said, and beyond reducing manual intervention, platform teams will also see much better resource predictability and cost efficiency. For example, in AI workloads where GPU idle time is extremely expensive, having Kubernetes automatically detect a degraded node and reschedule the training coordinator or agent before the job crashes means less wasted compute and more stable job execution.&lt;/p>
+&lt;h2 id="challenges-and-trade-offs">Challenges and trade-offs&lt;a class="td-heading-self-link" href="#challenges-and-trade-offs" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>Evolving APIs that millions of workloads rely on requires careful engineering and even more careful decision-making. We asked the SIG Apps chairs about the technical and operational trade-offs they weigh when introducing changes to Kubernetes’ core workload controllers.&lt;/p>
+&lt;p>&lt;strong>NF: What are some of the hardest technical or operational trade-offs SIG Apps encounters when evolving core workload controllers?&lt;/strong>&lt;/p>
+&lt;p>MS: Honestly, a few tensions keep coming up: how aggressively a controller should give up on stuck pods, and what signals it actually needs to make that call correctly. At the same time, we always have to think about backward compatibility. Deployment, DaemonSet, and Job behavior has been depended on for a decade [by Kubernetes users, tooling, automation, and higher-level controllers], so even a change that’s clearly “more correct” can break automation people built around the old behavior without meaning to.&lt;/p>
+&lt;p>JK: One of our hardest trade-offs is resisting the urge to make &amp;quot;elegant&amp;quot; design changes that break backward compatibility. Instead, we have to design opt-in features that let users adopt new behaviors without forcing them on legacy workloads. When we need to support completely new paradigms, we prefer introducing them as CRDs first rather than bloating the core APIs, like we are doing with Agent Sandbox, JobSet, and LWS.&lt;/p>
+&lt;h2 id="looking-ahead">Looking ahead&lt;a class="td-heading-self-link" href="#looking-ahead" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>While much of SIG Apps’ work focuses on maintaining the stability of existing workload APIs, the group is also shaping the future of Kubernetes through new enhancements and proposals. We concluded by asking about one proposal that recently returned to active development and what it represents for the future of workload management.&lt;/p>
+&lt;p>&lt;strong>NF: The SIG recently discussed reviving KEP-4443 with a target release of Kubernetes 1.38. What opportunities or challenges does this proposal aim to address, and why is now the right time to revisit it?&lt;/strong>&lt;/p>
+&lt;p>&lt;a href="https://www.kubernetes.dev/resources/keps/4443/">KEP-4443&lt;/a> addresses a small but real gap in the Job API: a &lt;a href="https://kubernetes.io/docs/concepts/workloads/controllers/job/#pod-failure-policy">PodFailurePolicy&lt;/a> can be configured to add a condition reason to the JobFailed condition, but different pod failure policy rules targeting different container exit codes all produce that same generic reason. The proposal is simple: an optional Name field on each PodFailurePolicyRule, which gets appended to the JobFailed condition reason, so higher-level tools like JobSet can finally react differently depending on which rule triggered the failure.&lt;/p>
+&lt;p>As for timing, the answer is as simple as it always is in open source: we lost the original contributor who was driving this. Now we’ve got someone new interested in picking it up, that’s why we’re targeting the next release.&lt;/p>
+&lt;h2 id="getting-involved">Getting Involved&lt;a class="td-heading-self-link" href="#getting-involved" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>&lt;strong>NF: For someone interested in contributing to SIG Apps, where would you recommend they start, especially if they are not yet a Kubernetes maintainer?&lt;/strong>&lt;/p>
+&lt;p>MS: The best place to start is the &lt;a href="https://www.kubernetes.dev/community/community-groups/sigs/apps/">#sig-apps&lt;/a> slack channel and our regular &lt;a href="https://github.com/kubernetes/community/blob/main/sig-apps/README.md#meetings">SIG Apps meetings&lt;/a>. We’ve all started there, and if it feels intimidating, or nobody replies right away, that’s completely normal. Everyone's busy. It's not personal.&lt;/p>
+&lt;p>JK: In addition to what Maciej answered, I'd suggest looking at our newer subprojects and initiatives. Contributing to stable APIs like Deployment or StatefulSet can be daunting because the barrier for making changes is very high due to backward compatibility, and there is much less low-hanging fruit.&lt;/p>
+&lt;p>If you are new to the community, projects like the &lt;a href="https://github.com/kubernetes-sigs/agent-sandbox">Agent Sandbox&lt;/a> are fantastic entry points. They are actively evolving, have a friendly group of maintainers, and offer plenty of greenfield development opportunities where you can make a significant impact quickly.&lt;/p>
+&lt;h2 id="summary">Summary&lt;a class="td-heading-self-link" href="#summary" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>SIG Apps has shaped how Kubernetes applications are deployed and operated since the project’s earliest days. While users often interact with Deployments, StatefulSets, Jobs, and DaemonSets without thinking about the controllers behind them, the work within SIG Apps continues to shape the reliability and scalability of workloads across the Kubernetes ecosystem.&lt;/p>
+&lt;p>From improving workload resilience and node lifecycle behavior to enabling new patterns for AI and distributed computing, the SIG is evolving Kubernetes while remaining committed to one of the project’s core principles: preserving the stability and backward compatibility that users depend on. Whether you’re interested in core workload APIs, emerging projects like Agent Sandbox, or helping improve the operational experience of Kubernetes users everywhere, SIG Apps offers many opportunities to get involved.&lt;/p></description></item>
+<item><title>Kubernetes v1.37: Tracking When a PersistentVolumeClaim Was Last Used (Beta)</title><link>https://kubernetes.io/blog/2026/09/21/kubernetes-v1-37-pvc-last-used-time/</link><pubDate>Mon, 21 Sep 2026 10:30:00 -0800</pubDate><guid>https://kubernetes.io/blog/2026/09/21/kubernetes-v1-37-pvc-last-used-time/</guid><description>
+&lt;p>Kubernetes v1.37 promotes the &lt;code>PersistentVolumeClaimUnusedSinceTime&lt;/code> feature gate to Beta (enabled by
+default). With this feature, the PersistentVolumeClaim (PVC) protection controller adds an &lt;code>Unused&lt;/code>
+condition to each PVC, telling you whether any running pod currently references it — no custom
+tooling or cross-referencing required.&lt;/p>
+&lt;p>For the API definition of PVC conditions, see the
+&lt;a href="https://kubernetes.io/docs/reference/kubernetes-api/core/persistent-volume-claim-v1/#PersistentVolumeClaimCondition">PersistentVolumeClaim API reference&lt;/a>.
+Read on to learn how the &lt;code>Unused&lt;/code> condition works and how to use it.&lt;/p>
+&lt;h2 id="why-track-pvc-usage">Why track PVC usage?&lt;a class="td-heading-self-link" href="#why-track-pvc-usage" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>In large-scale Kubernetes clusters, it is common for users to create PVCs and then delete the
+associated pods without cleaning up the storage, because Kubernetes does not automatically delete
+PVCs when their pods are removed (to protect against accidental data loss). Over time, these
+&lt;em>orphaned&lt;/em> PVCs may accumulate, silently consuming storage capacity and driving up cloud costs.&lt;/p>
+&lt;p>Before Kubernetes v1.37, it was easy to identify an unused PersistentVolume, but much harder to
+determine whether a PVC was still being used. Doing so required cross-referencing pods,
+PersistentVolumes, and PVCs over a potentially large window of time. Administrators often resorted
+to custom monitoring pipelines or scripts to answer a seemingly simple question:
+&lt;em>&amp;quot;Is anything actually using this volume?&amp;quot;&lt;/em>&lt;/p>
+&lt;p>The &lt;code>PersistentVolumeClaimUnusedSinceTime&lt;/code> feature solves this by making the answer available
+natively in the PVC status. Once the feature is enabled, every PVC gets an &lt;code>Unused&lt;/code> condition managed
+by the PVC protection controller.&lt;/p>
+&lt;h3 id="user-stories">User stories&lt;a class="td-heading-self-link" href="#user-stories" aria-label="Heading self-link">&lt;/a>&lt;/h3>&lt;ul>
+&lt;li>&lt;strong>Storage administrator&lt;/strong>: &amp;quot;I want to know which PVCs in my cluster are not being used by any pod
+so I can safely identify orphaned volumes and schedule them for deletion.&amp;quot;&lt;/li>
+&lt;li>&lt;strong>DevOps engineer&lt;/strong>: &amp;quot;I want to list PVCs that have the &lt;code>Unused&lt;/code> condition set to &lt;code>True&lt;/code> so I
+can automate cleanup in development environments.&amp;quot;&lt;/li>
+&lt;/ul>
+&lt;h2 id="how-does-it-work">How does it work?&lt;a class="td-heading-self-link" href="#how-does-it-work" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>The PVC protection controller — which already watches pods to enforce the
+&lt;a href="https://kubernetes.io/docs/concepts/storage/persistent-volumes/#storage-object-in-use-protection">storage object in use protection&lt;/a>
+— now also manages a new &lt;code>Unused&lt;/code> condition on PVCs.&lt;/p>
+&lt;p>The condition works as follows:&lt;/p>
+&lt;table>
+&lt;thead>
+&lt;tr>
+&lt;th>Scenario&lt;/th>
+&lt;th>Condition status&lt;/th>
+&lt;th>Reason&lt;/th>
+&lt;/tr>
+&lt;/thead>
+&lt;tbody>
+&lt;tr>
+&lt;td>No non-terminal pods reference the PVC&lt;/td>
+&lt;td>&lt;code>Unused=True&lt;/code>&lt;/td>
+&lt;td>&lt;code>NoPodsUsingPVC&lt;/code>&lt;/td>
+&lt;/tr>
+&lt;tr>
+&lt;td>At least one running or pending pod references the PVC&lt;/td>
+&lt;td>&lt;code>Unused=False&lt;/code>&lt;/td>
+&lt;td>&lt;code>PodUsingPVC&lt;/code>&lt;/td>
+&lt;/tr>
+&lt;/tbody>
+&lt;/table>
+&lt;p>A few details worth noting:&lt;/p>
+&lt;ul>
+&lt;li>&lt;strong>Terminated pods don't count&lt;/strong>: A pod that has completed (phase &lt;code>Succeeded&lt;/code> or &lt;code>Failed&lt;/code>) does not
+keep the PVC marked as in use. This means batch jobs with &lt;code>restartPolicy: Never&lt;/code> won't prevent
+the PVC from becoming &lt;code>Unused=True&lt;/code> after they finish.&lt;/li>
+&lt;li>&lt;strong>Pending pods do count&lt;/strong>: Even an unschedulable pod (for example, one with an impossible node
+selector) still counts as using the PVC. The intent to use the volume is enough.&lt;/li>
+&lt;li>&lt;strong>Multiple pods&lt;/strong>: If several pods reference the same PVC, the condition transitions to
+&lt;code>Unused=True&lt;/code> only after the *&lt;em>last&lt;/em>&amp;quot; non-terminated pod is removed or terminates.&lt;/li>
+&lt;/ul>
+&lt;h3 id="using-lasttransitiontime-to-find-when-a-pvc-became-idle">Using &lt;code>lastTransitionTime&lt;/code> to find when a PVC became idle&lt;a class="td-heading-self-link" href="#using-lasttransitiontime-to-find-when-a-pvc-became-idle" aria-label="Heading self-link">&lt;/a>&lt;/h3>&lt;p>Like every Kubernetes condition, the &lt;code>Unused&lt;/code> condition carries a standard &lt;code>lastTransitionTime&lt;/code>
+field. This means you get a useful bonus for free: when the condition transitions from &lt;code>False&lt;/code> to
+&lt;code>True&lt;/code>, the &lt;code>lastTransitionTime&lt;/code> records exactly when the PVC became idle. You can use this
+timestamp to answer questions like &lt;em>&amp;quot;how long has this PVC been sitting unused?&amp;quot;&lt;/em> — for example,
+to find PVCs that have been idle for more than 30 days (see the
+&lt;a href="#finding-unused-pvcs-across-the-cluster">example query&lt;/a> below).&lt;/p>
+&lt;h2 id="what-changed-from-alpha-to-beta">What changed from Alpha to Beta?&lt;a class="td-heading-self-link" href="#what-changed-from-alpha-to-beta" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>Kubernetes v1.36 introduced this feature as Alpha, where you had to enable the
+&lt;code>PersistentVolumeClaimUnusedSinceTime&lt;/code> feature gate explicitly. For Beta in v1.37, the feature gate
+is enabled by default, and the feature has full end-to-end test coverage.&lt;/p>
+&lt;h2 id="how-to-use-it">How to use it&lt;a class="td-heading-self-link" href="#how-to-use-it" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>Since the feature is Beta and enabled by default in Kubernetes v1.37, the &lt;code>Unused&lt;/code> condition will
+appear on PVCs automatically. Here is a walkthrough to see it in action:&lt;/p>
+&lt;ol>
+&lt;li>
+&lt;p>Create a PVC:&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-yaml" data-lang="yaml">&lt;span class="line">&lt;span class="cl">&lt;span class="nt">apiVersion&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="l">v1&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="nt">kind&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="l">PersistentVolumeClaim&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="nt">metadata&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>&lt;span class="nt">name&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="l">my-data&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="nt">spec&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>&lt;span class="nt">accessModes&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>- &lt;span class="l">ReadWriteOnce&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>&lt;span class="nt">resources&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>&lt;span class="nt">requests&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>&lt;span class="nt">storage&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="l">1Gi&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;/li>
+&lt;li>
+&lt;p>After a short time, inspect the PVC conditions:&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-shell" data-lang="shell">&lt;span class="line">&lt;span class="cl">kubectl get pvc my-data -o &lt;span class="nv">jsonpath&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s1">&amp;#39;{.status.conditions[*]}&amp;#39;&lt;/span> &lt;span class="p">|&lt;/span> jq .
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>You should see an &lt;code>Unused&lt;/code> condition with status &lt;code>True&lt;/code> and reason &lt;code>NoPodsUsingPVC&lt;/code>:&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-json" data-lang="json">&lt;span class="line">&lt;span class="cl">&lt;span class="p">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="nt">&amp;#34;lastProbeTime&amp;#34;&lt;/span>&lt;span class="p">:&lt;/span> &lt;span class="kc">null&lt;/span>&lt;span class="p">,&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="nt">&amp;#34;lastTransitionTime&amp;#34;&lt;/span>&lt;span class="p">:&lt;/span> &lt;span class="s2">&amp;#34;2026-09-14T12:03:11Z&amp;#34;&lt;/span>&lt;span class="p">,&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="nt">&amp;#34;message&amp;#34;&lt;/span>&lt;span class="p">:&lt;/span> &lt;span class="s2">&amp;#34;No pods are currently referencing this PVC&amp;#34;&lt;/span>&lt;span class="p">,&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="nt">&amp;#34;reason&amp;#34;&lt;/span>&lt;span class="p">:&lt;/span> &lt;span class="s2">&amp;#34;NoPodsUsingPVC&amp;#34;&lt;/span>&lt;span class="p">,&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="nt">&amp;#34;status&amp;#34;&lt;/span>&lt;span class="p">:&lt;/span> &lt;span class="s2">&amp;#34;True&amp;#34;&lt;/span>&lt;span class="p">,&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="nt">&amp;#34;type&amp;#34;&lt;/span>&lt;span class="p">:&lt;/span> &lt;span class="s2">&amp;#34;Unused&amp;#34;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">}&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;/li>
+&lt;li>
+&lt;p>Create a pod that uses the PVC:&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-yaml" data-lang="yaml">&lt;span class="line">&lt;span class="cl">&lt;span class="nt">apiVersion&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="l">v1&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="nt">kind&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="l">Pod&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="nt">metadata&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>&lt;span class="nt">name&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="l">my-app&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="nt">spec&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>&lt;span class="nt">containers&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>- &lt;span class="nt">name&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="l">app&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>&lt;span class="nt">image&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="l">busybox&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>&lt;span class="nt">command&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="p">[&lt;/span>&lt;span class="s2">&amp;#34;sleep&amp;#34;&lt;/span>&lt;span class="p">,&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="s2">&amp;#34;3600&amp;#34;&lt;/span>&lt;span class="p">]&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>&lt;span class="nt">volumeMounts&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>- &lt;span class="nt">name&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="l">data&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>&lt;span class="nt">mountPath&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="l">/data&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>&lt;span class="nt">volumes&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>- &lt;span class="nt">name&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="l">data&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>&lt;span class="nt">persistentVolumeClaim&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>&lt;span class="nt">claimName&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="l">my-data&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;/li>
+&lt;li>
+&lt;p>Check the condition again — it should now show &lt;code>Unused=False&lt;/code>:&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-shell" data-lang="shell">&lt;span class="line">&lt;span class="cl">kubectl get pvc my-data -o &lt;span class="nv">jsonpath&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s1">&amp;#39;{.status.conditions[?(@.type==&amp;#34;Unused&amp;#34;)].status}&amp;#39;&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>Output:&lt;/p>
+&lt;pre tabindex="0">&lt;code>False
+&lt;/code>&lt;/pre>&lt;/li>
+&lt;li>
+&lt;p>Delete the pod and wait for the condition to transition back to &lt;code>Unused=True&lt;/code>:&lt;/p>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-shell" data-lang="shell">&lt;span class="line">&lt;span class="cl">kubectl delete pod my-app
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">kubectl get pvc my-data -o &lt;span class="nv">jsonpath&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s1">&amp;#39;{.status.conditions[?(@.type==&amp;#34;Unused&amp;#34;)]}&amp;#39;&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>The condition should show &lt;code>Unused=True&lt;/code> with reason &lt;code>NoPodsUsingPVC&lt;/code> again.&lt;/p>
+&lt;/li>
+&lt;/ol>
+&lt;h3 id="finding-unused-pvcs-across-the-cluster">Finding unused PVCs across the cluster&lt;a class="td-heading-self-link" href="#finding-unused-pvcs-across-the-cluster" aria-label="Heading self-link">&lt;/a>&lt;/h3>&lt;p>To list all PVCs that have been unused for more than 30 days, you can use a command like:&lt;/p>
+&lt;div class="alert alert-info" role="note">&lt;h4 class="alert-heading">Note:&lt;/h4>This command uses &lt;a href="https://jqlang.org/">&lt;code>jq&lt;/code>&lt;/a>, a command-line JSON processor.&lt;/div>
+&lt;div class="highlight">&lt;pre tabindex="0" class="chroma">&lt;code class="language-shell" data-lang="shell">&lt;span class="line">&lt;span class="cl">kubectl get pvc -A -o json &lt;span class="p">|&lt;/span> jq -r &lt;span class="s1">&amp;#39;
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s1"> .items[]
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s1"> | select(.status.conditions[]? | select(.type==&amp;#34;Unused&amp;#34; and .status==&amp;#34;True&amp;#34;))
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s1"> | select(
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s1"> (.status.conditions[] | select(.type==&amp;#34;Unused&amp;#34;) | .lastTransitionTime) as $t
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s1"> | (now - ($t | fromdateiso8601)) &amp;gt; (30 * 86400)
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s1"> )
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s1"> | &amp;#34;\(.metadata.namespace)/\(.metadata.name) unused since \(.status.conditions[] | select(.type==&amp;#34;Unused&amp;#34;) | .lastTransitionTime)&amp;#34;
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s1">&amp;#39;&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;h2 id="what-s-next">What's next?&lt;a class="td-heading-self-link" href="#what-s-next" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>Depending on feedback and adoption, the Kubernetes project intends to graduate this feature to
+General Availability (GA) in a future release. If you have feedback on this feature, please open an issue
+in the &lt;a href="https://github.com/kubernetes/kubernetes">kubernetes/kubernetes&lt;/a> repository.&lt;/p>
+&lt;p>To learn more about this enhancement, refer to
+&lt;a href="https://www.kubernetes.dev/resources/keps/5541/">KEP-5541: PersistentVolumeClaim last used time&lt;/a>.&lt;/p>
+&lt;h2 id="getting-involved">Getting involved&lt;a class="td-heading-self-link" href="#getting-involved" aria-label="Heading self-link">&lt;/a>&lt;/h2>&lt;p>The Kubernetes project always welcomes new contributors. If you would like to get involved, you can
+join us at &lt;a href="https://www.kubernetes.dev/community/community-groups/sigs/storage/">SIG Storage&lt;/a>.&lt;/p>
+&lt;p>If you would like to share feedback, you can do so on our
+&lt;a href="https://kubernetes.slack.com/messages/sig-storage">public Slack channel&lt;/a>
+(visit &lt;a href="https://slack.k8s.io/">https://slack.k8s.io/&lt;/a> for an invitation if you need one).&lt;/p>
+&lt;p>Special thanks to the contributors who helped design and implement this feature (alphabetical order):&lt;/p>
+&lt;ul>
+&lt;li>Arvind Parekh (&lt;a href="https://github.com/ArvindParekh">ArvindParekh&lt;/a>)&lt;/li>
+&lt;li>Hemant Kumar (&lt;a href="https://github.com/gnufied">gnufied&lt;/a>)&lt;/li>
+&lt;li>Jan Šafránek (&lt;a href="https://github.com/jsafrane">jsafrane&lt;/a>)&lt;/li>
+&lt;li>Kevin Hannon (&lt;a href="https://github.com/kannon92">kannon92&lt;/a>)&lt;/li>
+&lt;li>Roman Bednář (&lt;a href="https://github.com/RomanBednar">RomanBednar&lt;/a>)&lt;/li>
+&lt;/ul></description></item>
+</channel></rss>

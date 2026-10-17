@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+<channel><title>Example DevOps Blog</title><link>https://blog.example.com/</link>
+<item><title><![CDATA[Blue/Green &amp; Canary with <em>ECS</em>]]></title><link>https://blog.example.com/posts/blue-green?utm_source=rss</link><dc:creator>Jane Doe</dc:creator><pubDate>Fri, 16 Oct 2026 23:12:00 GMT</pubDate><media:thumbnail url="https://cdn.example.com/bg.png"/></item>
+<item><title>It&#8217;s relative</title><link>https://blog.example.com/posts/relative</link><pubDate>Thu, 15 Oct 2026 08:00:00 +0700</pubDate><content:encoded><![CDATA[<p>Hi</p><img src="/images/rel.png"><img src="https://x.io/second.png">]]></content:encoded></item>
+<item><title>Enclosure post</title><link>https://blog.example.com/posts/enclosure</link><author>ops@example.com (Ops Team)</author><pubDate>Wed, 14 Oct 2026 10:00:00 GMT</pubDate><enclosure url="//cdn.example.com/enc.jpg" type="image/jpeg" length="1"/></item>
+<item><title>No date post</title><link>https://blog.example.com/posts/nodate</link></item>
+</channel></rss>
