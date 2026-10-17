@@ -1,0 +1,58 @@
+@import 'tailwindcss';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --fz-bg: #f8fafc;
+  --fz-surface: #ffffff;
+  --fz-border: #e2e8f0;
+  --fz-text: #0f172a;
+  --fz-muted: #475569;
+  --fz-accent: #0891b2;
+}
+
+:root.dark {
+  --fz-bg: #0b1020;
+  --fz-surface: #121a33;
+  --fz-border: #1e293b;
+  --fz-text: #e2e8f0;
+  --fz-muted: #94a3b8;
+  --fz-accent: #22d3ee;
+}
+
+@theme inline {
+  --color-bg: var(--fz-bg);
+  --color-surface: var(--fz-surface);
+  --color-border: var(--fz-border);
+  --color-text: var(--fz-text);
+  --color-muted: var(--fz-muted);
+  --color-accent: var(--fz-accent);
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, monospace;
+}
+
+html {
+  color-scheme: light;
+}
+html.dark {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--fz-bg);
+  color: var(--fz-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--fz-accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
