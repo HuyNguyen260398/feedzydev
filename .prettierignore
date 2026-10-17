@@ -1,0 +1,7 @@
+dist
+out
+.next
+coverage
+*.lock
+pnpm-lock.yaml
+test/fixtures
