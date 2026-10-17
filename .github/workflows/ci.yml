@@ -92,34 +92,43 @@ jobs:
         working-directory: infra/envs/prod
         run: terraform validate
 
+      # Fork PRs get no secrets/OIDC token, so the remote plan runs only for
+      # same-repo PRs (and push/dispatch/call events) that touch infra or backend.
+      - name: Decide remote plan
+        id: gate
+        env:
+          CHANGED: ${{ steps.changes.outputs.plan }}
+          SAME_REPO: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: echo "plan=$([ "$CHANGED" = true ] && [ "$SAME_REPO" = true ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
       # Remote-state init + plan reach AWS; run them only when infra or backend
       # code changed.
       - uses: pnpm/action-setup@v6
-        if: steps.changes.outputs.plan == 'true'
+        if: steps.gate.outputs.plan == 'true'
         with:
           package_json_file: backend/package.json
       - uses: actions/setup-node@v6
-        if: steps.changes.outputs.plan == 'true'
+        if: steps.gate.outputs.plan == 'true'
         with:
           node-version-file: .nvmrc
           cache: pnpm
           cache-dependency-path: backend/pnpm-lock.yaml
       - name: Build lambda artifacts (needed for archive_file)
-        if: steps.changes.outputs.plan == 'true'
+        if: steps.gate.outputs.plan == 'true'
         working-directory: backend
         run: pnpm install --frozen-lockfile && pnpm run build
       - name: Configure AWS credentials (OIDC)
-        if: steps.changes.outputs.plan == 'true'
+        if: steps.gate.outputs.plan == 'true'
         uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_PLAN_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
       - name: Init (remote state)
-        if: steps.changes.outputs.plan == 'true'
+        if: steps.gate.outputs.plan == 'true'
         working-directory: infra/envs/prod
         run: terraform init -reconfigure -backend-config="bucket=${{ vars.STATE_BUCKET_NAME }}" -backend-config="region=${{ vars.AWS_REGION }}"
       - name: Plan
-        if: steps.changes.outputs.plan == 'true'
+        if: steps.gate.outputs.plan == 'true'
         working-directory: infra/envs/prod
         env:
           TF_VAR_allowed_email: ${{ vars.ALLOWED_EMAIL }}

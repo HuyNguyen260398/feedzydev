@@ -136,6 +136,7 @@ checked to respond.
 ```bash
 cd infra/envs/prod
 terraform init -backend-config="bucket=feedzydev-claude-tfstate-010382427026" -backend-config="region=ap-southeast-1"
+aws s3 rm s3://feedzydev-claude-prod-site-010382427026 --recursive   # site bucket is not force_destroy
 terraform destroy      # prompts for the three required variables (or use TF_VAR_*)
 
 # Then the bootstrap stack. Empty the state bucket first (all object versions):
@@ -146,6 +147,5 @@ cd ../../bootstrap && terraform destroy
 ```
 
 If the bucket also holds delete markers, remove them the same way
-(`DeleteMarkers[]`). The site bucket is not `force_destroy`, so empty it before
-the prod destroy:
-`aws s3 rm s3://feedzydev-claude-prod-site-010382427026 --recursive`.
+(`DeleteMarkers[]`). The site bucket is not `force_destroy`, which is why the block
+above empties it before the prod destroy.
