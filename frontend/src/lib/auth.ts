@@ -56,6 +56,8 @@ export interface AuthState {
 }
 
 async function readState(): Promise<AuthState> {
+  if (process.env.NEXT_PUBLIC_MOCK === '1')
+    return { status: 'signedIn', email: 'mock@feedzydev.dev' };
   try {
     const session = await fetchAuthSession();
     if (!session.tokens?.idToken) return { status: 'signedOut' };

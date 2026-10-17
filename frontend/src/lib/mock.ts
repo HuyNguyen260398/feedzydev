@@ -1,5 +1,5 @@
 // Dev-only fixture data, loaded by api.ts when NEXT_PUBLIC_MOCK=1.
-import type { Page, PublicPost, PublicSource } from '@/lib/types';
+import type { AdminSource, FeedCandidate, Page, PublicPost, PublicSource } from '@/lib/types';
 
 const SOURCES: PublicSource[] = [
   { sourceId: 'k8s', name: 'Kubernetes Blog', siteUrl: 'https://kubernetes.io/blog/' },
@@ -99,4 +99,104 @@ export async function mockPosts(p: {
 export async function mockSources(): Promise<PublicSource[]> {
   await delay(150);
   return SOURCES;
+}
+
+const HOUR = 3_600_000;
+let adminSources: AdminSource[] | undefined;
+
+function seedAdmin(): AdminSource[] {
+  const now = Date.now();
+  return SOURCES.map((s, i) => ({
+    ...s,
+    feedUrl: `${s.siteUrl}feed.xml`,
+    enabled: i !== 3,
+    createdAt: new Date(now - 30 * 24 * HOUR).toISOString(),
+    lastCrawledAt: new Date(now - (i + 1) * HOUR).toISOString(),
+    lastStatus: i === 2 ? 'error' : 'ok',
+    ...(i === 2
+      ? {
+          lastError:
+            'HTTP 503 fetching https://www.hashicorp.com/blog/feed.xml (timeout after 10s)',
+        }
+      : { lastNewCount: i + 2 }),
+  }));
+}
+
+function admin(): AdminSource[] {
+  return (adminSources ??= seedAdmin());
+}
+
+export async function mockAdminList(): Promise<AdminSource[]> {
+  await delay(250);
+  return admin().map((s) => ({ ...s }));
+}
+
+export async function mockDiscover(url: string): Promise<FeedCandidate[]> {
+  await delay(500);
+  if (url.includes('nofeed')) {
+    const { ApiError } = await import('@/lib/api');
+    throw new ApiError(
+      422,
+      'NO_FEED_FOUND',
+      'No RSS/Atom feed found at this URL — try pasting the feed URL directly.',
+    );
+  }
+  const now = Date.now();
+  const preview = [0, 1, 2].map((i) => ({
+    title: TITLES[i],
+    publishedAt: new Date(now - (i + 1) * 20 * HOUR).toISOString(),
+  }));
+  return [
+    {
+      feedUrl: 'https://netflixtechblog.com/feed',
+      title: 'Netflix TechBlog',
+      siteUrl: 'https://netflixtechblog.com/',
+      preview,
+    },
+    {
+      feedUrl: SOURCES[0].siteUrl + 'feed.xml',
+      title: SOURCES[0].name,
+      siteUrl: SOURCES[0].siteUrl,
+      preview,
+    },
+  ];
+}
+
+export async function mockAdd(i: { feedUrl: string; name?: string }): Promise<AdminSource> {
+  await delay(300);
+  if (admin().some((s) => s.feedUrl === i.feedUrl)) {
+    const { ApiError } = await import('@/lib/api');
+    throw new ApiError(409, 'CONFLICT', 'This feed is already added.');
+  }
+  const host = new URL(i.feedUrl).hostname;
+  const created: AdminSource = {
+    sourceId: `mock-${host}`,
+    name: i.name ?? host,
+    siteUrl: `https://${host}/`,
+    feedUrl: i.feedUrl,
+    enabled: true,
+    createdAt: new Date().toISOString(),
+  };
+  admin().push(created);
+  return created;
+}
+
+export async function mockUpdate(
+  id: string,
+  patch: { name?: string; enabled?: boolean },
+): Promise<AdminSource> {
+  await delay(200);
+  const s = admin().find((x) => x.sourceId === id);
+  if (!s) throw new Error('not found');
+  Object.assign(s, patch);
+  return { ...s };
+}
+
+export async function mockDelete(id: string): Promise<void> {
+  await delay(200);
+  adminSources = admin().filter((s) => s.sourceId !== id);
+}
+
+export async function mockCrawl(): Promise<void> {
+  await delay(300);
 }

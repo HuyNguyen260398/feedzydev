@@ -67,10 +67,12 @@ export async function getSources(): Promise<PublicSource[]> {
 }
 
 export async function listAdminSources(): Promise<AdminSource[]> {
+  if (process.env.NEXT_PUBLIC_MOCK === '1') return (await import('@/lib/mock')).mockAdminList();
   return (await request<{ items: AdminSource[] }>('/admin/sources', { admin: true })).items;
 }
 
 export async function discover(url: string): Promise<FeedCandidate[]> {
+  if (process.env.NEXT_PUBLIC_MOCK === '1') return (await import('@/lib/mock')).mockDiscover(url);
   const r = await request<{ candidates: FeedCandidate[] }>('/admin/sources/discover', {
     method: 'POST',
     body: { url },
@@ -79,14 +81,17 @@ export async function discover(url: string): Promise<FeedCandidate[]> {
   return r.candidates;
 }
 
-export function addSource(i: { feedUrl: string; name?: string }): Promise<AdminSource> {
+export async function addSource(i: { feedUrl: string; name?: string }): Promise<AdminSource> {
+  if (process.env.NEXT_PUBLIC_MOCK === '1') return (await import('@/lib/mock')).mockAdd(i);
   return request<AdminSource>('/admin/sources', { method: 'POST', body: i, admin: true });
 }
 
-export function updateSource(
+export async function updateSource(
   id: string,
   patch: { name?: string; enabled?: boolean },
 ): Promise<AdminSource> {
+  if (process.env.NEXT_PUBLIC_MOCK === '1')
+    return (await import('@/lib/mock')).mockUpdate(id, patch);
   return request<AdminSource>(`/admin/sources/${encodeURIComponent(id)}`, {
     method: 'PATCH',
     body: patch,
@@ -95,6 +100,7 @@ export function updateSource(
 }
 
 export async function deleteSource(id: string): Promise<void> {
+  if (process.env.NEXT_PUBLIC_MOCK === '1') return (await import('@/lib/mock')).mockDelete(id);
   await request<void>(`/admin/sources/${encodeURIComponent(id)}`, {
     method: 'DELETE',
     admin: true,
@@ -102,6 +108,7 @@ export async function deleteSource(id: string): Promise<void> {
 }
 
 export async function triggerCrawl(sourceId?: string): Promise<void> {
+  if (process.env.NEXT_PUBLIC_MOCK === '1') return (await import('@/lib/mock')).mockCrawl();
   await request<unknown>('/admin/crawl', {
     method: 'POST',
     body: sourceId ? { sourceId } : {},
