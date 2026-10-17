@@ -115,12 +115,12 @@ Future multi-user: sources would gain an owner partition; posts could stay globa
 | `GET /api/sources` | public | Enabled sources' `sourceId`, `name`, `siteUrl`, `iconUrl` (for filter chips). |
 | `GET /api/admin/sources` | owner | All sources with status fields. |
 | `POST /api/admin/sources/discover` `{url}` | owner | Resolve URL → candidate feeds, each with title, feedUrl, siteUrl, and latest 3 entry titles/dates as preview. Does not save. |
-| `POST /api/admin/sources` `{feedUrl, name?}` | owner | Re-validates the feed, saves the source. 409 if `feedUrl` already exists. |
+| `POST /api/admin/sources` `{feedUrl, name?}` | owner | Re-validates the feed, saves the source, then async-triggers a crawl of just that source **[call]**. 409 if `feedUrl` already exists. |
 | `PATCH /api/admin/sources/{id}` `{name?, enabled?}` | owner | Rename / enable / disable. |
 | `DELETE /api/admin/sources/{id}` | owner | Delete source **and its posts** **[call]**. |
 | `POST /api/admin/crawl` `{sourceId?}` | owner | Async-invoke the crawler (all enabled sources, or one). Returns 202. |
 
-"Owner" means: API Gateway Cognito authorizer validates the **ID token** (sent as `Authorization: Bearer <idToken>`), **and** the Lambda checks `claims.email === ALLOWED_EMAIL` and `email_verified`, returning 403 otherwise **[call: defense in depth]**. Grouping writes under `/api/admin/*` makes per-method authorizer config simple (one proxy resource with the authorizer).
+"Owner" means: API Gateway Cognito authorizer validates the **ID token** (sent as the raw token in `Authorization`, no `Bearer ` prefix — as in the reference), **and** the Lambda checks `claims.email === ALLOWED_EMAIL` and `email_verified`, returning 403 otherwise **[call: defense in depth]**. Grouping writes under `/api/admin/*` makes per-method authorizer config simple (one proxy resource with the authorizer).
 
 Errors: `{ "error": { "code": "...", "message": "..." } }` with appropriate 4xx/5xx. Discovery returns 422 `NO_FEED_FOUND` with message "No RSS/Atom feed found at this URL — try pasting the feed URL directly."
 
