@@ -485,8 +485,8 @@ test.each(['aws-devops.xml', 'kubernetes.xml'])('real feed %s parses', (n) => {
 
 **Interfaces (module variables → outputs):**
 - `data(name_prefix)` → `sources_table_name`, `sources_table_arn`, `posts_table_name`, `posts_table_arn`. Builds both tables as in Global Constraints. Both GSIs use projection ALL, TTL is on `expiresAt`, and point-in-time recovery is on for `sources` only.
-- `lambda(function_name, zip_path, timeout = 10, memory_size = 256, environment = {}, policy_json = null, reserved_concurrency = -1)` → `function_name`, `arn`, `invoke_arn`, `role_name`. It creates:
-  - an IAM role (`${function_name}-role`) with `AWSLambdaBasicExecutionRole`, plus the optional inline `policy_json`
+- `lambda(function_name, zip_path, permissions_boundary_arn, timeout = 10, memory_size = 256, environment = {}, policy_json = null, reserved_concurrency = -1)` → `function_name`, `arn`, `invoke_arn`, `role_name`. It creates:
+  - an IAM role (`${function_name}-role`) with `permissions_boundary = var.permissions_boundary_arn`, `AWSLambdaBasicExecutionRole`, plus the optional inline `policy_json`
   - an `aws_cloudwatch_log_group` `/aws/lambda/${function_name}` with 30-day retention
   - the function: `runtime nodejs24.x`, `handler index.handler`, `architectures ["arm64"]`, and `source_code_hash = filebase64sha256(zip_path)`
 - `auth(name_prefix, domain_prefix, google_client_id, google_client_secret (sensitive), callback_urls, presignup_lambda_arn, presignup_function_name)` → `user_pool_id`, `user_pool_arn`, `user_pool_client_id`, `cognito_domain` (the full host `${domain_prefix}.auth.${region}.amazoncognito.com`).
@@ -495,9 +495,9 @@ test.each(['aws-devops.xml', 'kubernetes.xml'])('real feed %s parses', (n) => {
   - `aws_cognito_user_pool_domain` uses the prefix.
   - Client: no secret, `explicit_auth_flows = ["ALLOW_REFRESH_TOKEN_AUTH"]` (no password/SRP login), `allowed_oauth_flows ["code"]`, `allowed_oauth_scopes ["openid","email","profile"]`, `supported_identity_providers ["Google"]`, `callback_urls = logout_urls = var.callback_urls` and `allowed_oauth_flows_user_pool_client = true`.
   - `aws_lambda_permission` lets `cognito-idp.amazonaws.com` invoke the presignup function, with `source_arn` set to the pool ARN.
-- `schedule(name_prefix, target_lambda_arn, target_function_name)` → `schedule_name`.
+- `schedule(name_prefix, target_lambda_arn, target_function_name, permissions_boundary_arn)` → `schedule_name`.
   - `aws_scheduler_schedule` `${name_prefix}-daily-crawl`: `cron(0 7 * * ? *)`, timezone `Asia/Ho_Chi_Minh`, flexible window OFF, `retry_policy { maximum_retry_attempts = 2 }`, input `{}`.
-  - Plus a scheduler IAM role allowed `lambda:InvokeFunction` on the target.
+  - Plus a scheduler IAM role named `${name_prefix}-scheduler-role` (must start with the prefix — the deploy role's IAM scope), with `permissions_boundary = var.permissions_boundary_arn`, allowed `lambda:InvokeFunction` on the target.
 
 - [ ] **Step 1: Write the four modules.**
 - [ ] **Step 2: Run** `terraform fmt -check -recursive infra/modules`. Expected: no output. (Validation happens via the root in Task 10.)
@@ -529,7 +529,7 @@ test.each(['aws-devops.xml', 'kubernetes.xml'])('real feed %s parses', (n) => {
 - `envs/prod`:
   - `backend "s3" { key = "feedzydev-claude/prod/terraform.tfstate", encrypt = true, use_lockfile = true }`. The bucket and region come via `-backend-config`.
   - Providers: `aws` (var.region), and `aws` alias `us_east_1` (region `us-east-1`). Both have `default_tags { Project = "feedzydev-claude", Environment = "prod", ManagedBy = "terraform" }`.
-  - Variables: `region` (default `ap-southeast-1`), `name_prefix` (`feedzydev-claude-prod`), `domain_name` (`feedzydev-claude.nghuy.link`), `hosted_zone_name` (`nghuy.link`), `site_bucket_name` (`feedzydev-claude-prod-site-010382427026`), `cognito_domain_prefix` (`feedzydev-claude-010382427026`), plus `allowed_email`, `google_client_id` and `google_client_secret` (sensitive, no defaults).
+  - Variables: `region` (default `ap-southeast-1`), `name_prefix` (`feedzydev-claude-prod`), `domain_name` (`feedzydev-claude.nghuy.link`), `hosted_zone_name` (`nghuy.link`), `site_bucket_name` (`feedzydev-claude-prod-site-010382427026`), `cognito_domain_prefix` (`feedzydev-claude-010382427026`), `permissions_boundary_arn` (`arn:aws:iam::010382427026:policy/feedzydev-claude-prod-boundary`, passed to every `lambda` and `schedule` instance), plus `allowed_email`, `google_client_id` and `google_client_secret` (sensitive, no defaults).
   - `data "aws_route53_zone" "main" { name = var.hosted_zone_name }`
   - Three `archive_file`s zip `backend/dist/{api,crawler,presignup}/index.js` to `backend/dist/{name}.zip`.
   - The `lambda` module is instantiated three times:
