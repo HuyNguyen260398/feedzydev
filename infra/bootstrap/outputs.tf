@@ -9,3 +9,7 @@ output "plan_role_arn" {
 output "deploy_role_arn" {
   value = aws_iam_role.deploy.arn
 }
+
+output "permissions_boundary_arn" {
+  value = aws_iam_policy.boundary.arn
+}
