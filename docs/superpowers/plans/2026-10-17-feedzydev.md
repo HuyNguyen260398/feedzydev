@@ -423,7 +423,7 @@ test.each(['aws-devops.xml', 'kubernetes.xml'])('real feed %s parses', (n) => {
 
   - Invalid JSON gives 400 `INVALID_JSON`, and an `AppError` gives its own status and code. Anything else is logged and returns 500 `INTERNAL`.
   - `handler.ts` reads env `SOURCES_TABLE`, `POSTS_TABLE`, `ALLOWED_EMAIL` and `CRAWLER_FUNCTION_NAME`. `invokeCrawl` sends `InvokeCommand({ FunctionName, InvocationType: 'Event', Payload: JSON })`.
-  - `checkSignUp(event: PreSignUpTriggerEvent, allowedEmail: string): PreSignUpTriggerEvent` throws `new Error('This app is private.')` unless `userAttributes.email` matches case-insensitively. When it matches, it sets `response.autoConfirmUser = true` and `response.autoVerifyEmail = true`. The `handler` calls it with `process.env.ALLOWED_EMAIL`.
+  - `checkSignUp(event: PreSignUpTriggerEvent, allowedEmail: string): PreSignUpTriggerEvent` throws `new Error('This app is private.')` unless `event.triggerSource === 'PreSignUp_ExternalProvider'` **and** `userAttributes.email` matches case-insensitively (native `PreSignUp_SignUp` / `PreSignUp_AdminCreateUser` are always rejected — otherwise anyone could self-register with the owner's address and be auto-verified). When it matches, it sets `response.autoConfirmUser = true` and `response.autoVerifyEmail = true`. The `handler` calls it with `process.env.ALLOWED_EMAIL`.
 
 - [ ] **Step 1: Write the failing router tests.** Build events with a helper `ev(method, path, { body?, query?, claims?, pathParameters? })` and use fake deps with `allowedEmail: 'owner@example.com'`. Cover:
   - `GET /posts` strips internal fields and clamps `limit=500` → `listPage` called with `limit 50`.
@@ -490,10 +490,10 @@ test.each(['aws-devops.xml', 'kubernetes.xml'])('real feed %s parses', (n) => {
   - an `aws_cloudwatch_log_group` `/aws/lambda/${function_name}` with 30-day retention
   - the function: `runtime nodejs24.x`, `handler index.handler`, `architectures ["arm64"]`, and `source_code_hash = filebase64sha256(zip_path)`
 - `auth(name_prefix, domain_prefix, google_client_id, google_client_secret (sensitive), callback_urls, presignup_lambda_arn, presignup_function_name)` → `user_pool_id`, `user_pool_arn`, `user_pool_client_id`, `cognito_domain` (the full host `${domain_prefix}.auth.${region}.amazoncognito.com`).
-  - User pool: `username_attributes = ["email"]`, `admin_create_user_config.allow_admin_create_user_only = false`, and `lambda_config.pre_sign_up` set to the presignup ARN.
+  - User pool: `username_attributes = ["email"]`, `admin_create_user_config.allow_admin_create_user_only = true` (blocks the public SignUp API; Google federation still creates users), and `lambda_config.pre_sign_up` set to the presignup ARN.
   - `aws_cognito_identity_provider` Google: `authorize_scopes "openid email profile"`, with the attribute mapping `email→email`, `email_verified→email_verified`, `name→name`, `picture→picture`, `username→sub`.
   - `aws_cognito_user_pool_domain` uses the prefix.
-  - Client: no secret, `allowed_oauth_flows ["code"]`, `allowed_oauth_scopes ["openid","email","profile"]`, `supported_identity_providers ["Google"]`, `callback_urls = logout_urls = var.callback_urls` and `allowed_oauth_flows_user_pool_client = true`.
+  - Client: no secret, `explicit_auth_flows = ["ALLOW_REFRESH_TOKEN_AUTH"]` (no password/SRP login), `allowed_oauth_flows ["code"]`, `allowed_oauth_scopes ["openid","email","profile"]`, `supported_identity_providers ["Google"]`, `callback_urls = logout_urls = var.callback_urls` and `allowed_oauth_flows_user_pool_client = true`.
   - `aws_lambda_permission` lets `cognito-idp.amazonaws.com` invoke the presignup function, with `source_arn` set to the pool ARN.
 - `schedule(name_prefix, target_lambda_arn, target_function_name)` → `schedule_name`.
   - `aws_scheduler_schedule` `${name_prefix}-daily-crawl`: `cron(0 7 * * ? *)`, timezone `Asia/Ho_Chi_Minh`, flexible window OFF, `retry_policy { maximum_retry_attempts = 2 }`, input `{}`.
