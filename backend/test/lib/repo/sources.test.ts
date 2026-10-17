@@ -83,6 +83,8 @@ describe('SourcesRepo', () => {
     const input = ddb.commandCalls(UpdateCommand)[0].args[0].input;
     expect(input.ConditionExpression).toBe('attribute_exists(sourceId)');
     expect(input.ReturnValues).toBe('ALL_NEW');
+    expect(input.UpdateExpression).toBe('SET #name = :name, #enabled = :enabled');
+    expect(input.ExpressionAttributeNames).toEqual({ '#name': 'name', '#enabled': 'enabled' });
   });
 
   it('update on missing id → undefined', async () => {
@@ -109,7 +111,7 @@ describe('SourcesRepo', () => {
     ddb.on(UpdateCommand).resolves({});
     await repo.recordCrawl('id', { status: 'ok', newCount: 3, at: '2026-01-01T00:00:00.000Z' });
     const input = ddb.commandCalls(UpdateCommand)[0].args[0].input;
-    expect(input.UpdateExpression).toContain('REMOVE lastError');
+    expect(input.UpdateExpression).toContain('REMOVE #le');
     expect(Object.values(input.ExpressionAttributeValues ?? {})).toEqual(
       expect.arrayContaining(['ok', 3, '2026-01-01T00:00:00.000Z']),
     );
@@ -120,6 +122,27 @@ describe('SourcesRepo', () => {
     await repo.recordCrawl('id', { status: 'error', error: 'e'.repeat(900), newCount: 0, at: 't' });
     const input = ddb.commandCalls(UpdateCommand)[0].args[0].input;
     expect(input.UpdateExpression).not.toContain('REMOVE');
+    expect(input.ConditionExpression).toBe('attribute_exists(sourceId)');
+    expect(input.ExpressionAttributeNames?.['#le']).toBe('lastError');
     expect(input.ExpressionAttributeValues?.[':e']).toHaveLength(500);
+  });
+
+  it('recordCrawl on a deleted source resolves without throwing', async () => {
+    ddb.on(UpdateCommand).rejects(ccf());
+    await expect(
+      repo.recordCrawl('gone', { status: 'ok', newCount: 0, at: 't' }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('recordCrawl rethrows other errors', async () => {
+    ddb.on(UpdateCommand).rejects(new Error('boom'));
+    await expect(repo.recordCrawl('id', { status: 'ok', newCount: 0, at: 't' })).rejects.toThrow(
+      'boom',
+    );
+  });
+
+  it('list tolerates an item with no name', async () => {
+    ddb.on(ScanCommand).resolves({ Items: [{ sourceId: 'x' }, src({ name: 'A' })] });
+    expect(await repo.list()).toHaveLength(2);
   });
 });

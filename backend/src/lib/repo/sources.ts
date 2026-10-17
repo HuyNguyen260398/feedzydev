@@ -36,7 +36,9 @@ export class SourcesRepo {
       items.push(...((res.Items ?? []) as Source[]));
       startKey = res.LastEvaluatedKey;
     } while (startKey);
-    return items.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    return items.sort((a, b) =>
+      (a.name ?? '').localeCompare(b.name ?? '', undefined, { sensitivity: 'base' }),
+    );
   }
 
   async get(id: string): Promise<Source | undefined> {
@@ -89,7 +91,8 @@ export class SourcesRepo {
       values[':name'] = patch.name;
     }
     if (patch.enabled !== undefined) {
-      sets.push('enabled = :enabled');
+      sets.push('#enabled = :enabled');
+      names['#enabled'] = 'enabled';
       values[':enabled'] = patch.enabled;
     }
     if (sets.length === 0) return this.get(id);
@@ -134,20 +137,33 @@ export class SourcesRepo {
       ':n': r.newCount,
       ':t': r.at,
     };
-    let expr = 'SET lastStatus = :s, lastNewCount = :n, lastCrawledAt = :t';
+    const names: Record<string, string> = {
+      '#ls': 'lastStatus',
+      '#ln': 'lastNewCount',
+      '#lc': 'lastCrawledAt',
+      '#le': 'lastError',
+    };
+    let expr = 'SET #ls = :s, #ln = :n, #lc = :t';
     if (r.status === 'error') {
-      expr += ', lastError = :e';
+      expr += ', #le = :e';
       values[':e'] = (r.error ?? '').slice(0, MAX_ERROR_LENGTH);
     } else {
-      expr += ' REMOVE lastError';
+      expr += ' REMOVE #le';
     }
-    await this.doc.send(
-      new UpdateCommand({
-        TableName: this.table,
-        Key: { sourceId: id },
-        UpdateExpression: expr,
-        ExpressionAttributeValues: values,
-      }),
-    );
+    try {
+      await this.doc.send(
+        new UpdateCommand({
+          TableName: this.table,
+          Key: { sourceId: id },
+          UpdateExpression: expr,
+          ConditionExpression: 'attribute_exists(sourceId)',
+          ExpressionAttributeNames: names,
+          ExpressionAttributeValues: values,
+        }),
+      );
+    } catch (e) {
+      if (e instanceof ConditionalCheckFailedException) return;
+      throw e;
+    }
   }
 }
