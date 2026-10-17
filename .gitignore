@@ -1,0 +1,11 @@
+.superpowers/
+node_modules/
+.next/
+out/
+dist/
+.terraform/
+*.tfstate
+*.tfstate.*
+.env*
+!.env.example
+.DS_Store
