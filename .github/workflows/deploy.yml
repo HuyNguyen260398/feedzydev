@@ -1,0 +1,99 @@
+name: Deploy
+
+on:
+  push:
+    branches: [feedzydev-claude]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-feedzydev-claude-prod
+  cancel-in-progress: false
+
+jobs:
+  gates:
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+
+  deploy:
+    needs: gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: backend/package.json
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.15.5
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Build backend
+        working-directory: backend
+        run: pnpm install --frozen-lockfile && pnpm run build
+
+      - name: Terraform init
+        working-directory: infra/envs/prod
+        run: terraform init -backend-config="bucket=${{ vars.STATE_BUCKET_NAME }}" -backend-config="region=${{ vars.AWS_REGION }}"
+
+      - name: Terraform apply
+        working-directory: infra/envs/prod
+        env:
+          TF_VAR_allowed_email: ${{ vars.ALLOWED_EMAIL }}
+          TF_VAR_google_client_id: ${{ secrets.GOOGLE_CLIENT_ID }}
+          TF_VAR_google_client_secret: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+        run: terraform apply -auto-approve -input=false
+
+      - name: Capture outputs
+        id: tf
+        working-directory: infra/envs/prod
+        run: |
+          {
+            echo "pool_id=$(terraform output -raw user_pool_id)"
+            echo "client_id=$(terraform output -raw user_pool_client_id)"
+            echo "cognito_domain=$(terraform output -raw cognito_domain)"
+            echo "bucket=$(terraform output -raw site_bucket_name)"
+            echo "dist_id=$(terraform output -raw distribution_id)"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: frontend/package.json
+
+      - name: Build frontend
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_USER_POOL_ID: ${{ steps.tf.outputs.pool_id }}
+          NEXT_PUBLIC_USER_POOL_CLIENT_ID: ${{ steps.tf.outputs.client_id }}
+          NEXT_PUBLIC_COGNITO_DOMAIN: ${{ steps.tf.outputs.cognito_domain }}
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+
+      - name: Sync hashed assets to S3
+        run: |
+          aws s3 sync frontend/out/_next/static "s3://${{ steps.tf.outputs.bucket }}/_next/static" \
+            --delete --cache-control "public,max-age=31536000,immutable"
+
+      - name: Sync everything else to S3
+        run: |
+          aws s3 sync frontend/out "s3://${{ steps.tf.outputs.bucket }}" \
+            --delete --exclude "_next/static/*" --cache-control "no-cache"
+
+      - name: Invalidate CloudFront
+        run: aws cloudfront create-invalidation --distribution-id "${{ steps.tf.outputs.dist_id }}" --paths "/*"
+
+      - name: Smoke test
+        run: curl -fsS "https://feedzydev-claude.nghuy.link/api/posts?limit=1"

@@ -1,0 +1,129 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [feedzydev-claude]
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: backend/package.json
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: backend/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run format:check
+      - run: pnpm run lint
+      - run: pnpm run typecheck
+      - run: pnpm test
+      - run: pnpm run build
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: frontend/package.json
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run format:check
+      - run: pnpm run lint
+      - run: pnpm run typecheck
+      - run: pnpm test
+      - run: pnpm run build
+        env:
+          NEXT_PUBLIC_USER_POOL_ID: placeholder
+          NEXT_PUBLIC_USER_POOL_CLIENT_ID: placeholder
+          NEXT_PUBLIC_COGNITO_DOMAIN: placeholder.auth.ap-southeast-1.amazoncognito.com
+
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Detect infra/backend changes
+        uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: |
+            plan:
+              - 'infra/**'
+              - 'backend/**'
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.15.5
+          terraform_wrapper: false
+      - name: Format check
+        run: terraform fmt -check -recursive infra
+      # Init WITHOUT the S3 backend so fmt/validate run on every PR without
+      # needing the state bucket or AWS credentials.
+      - name: Init bootstrap (no backend)
+        working-directory: infra/bootstrap
+        run: terraform init -backend=false
+      - name: Validate bootstrap
+        working-directory: infra/bootstrap
+        run: terraform validate
+      - name: Init prod (no backend)
+        working-directory: infra/envs/prod
+        run: terraform init -backend=false
+      - name: Validate prod
+        working-directory: infra/envs/prod
+        run: terraform validate
+
+      # Remote-state init + plan reach AWS; run them only when infra or backend
+      # code changed.
+      - uses: pnpm/action-setup@v6
+        if: steps.changes.outputs.plan == 'true'
+        with:
+          package_json_file: backend/package.json
+      - uses: actions/setup-node@v6
+        if: steps.changes.outputs.plan == 'true'
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: backend/pnpm-lock.yaml
+      - name: Build lambda artifacts (needed for archive_file)
+        if: steps.changes.outputs.plan == 'true'
+        working-directory: backend
+        run: pnpm install --frozen-lockfile && pnpm run build
+      - name: Configure AWS credentials (OIDC)
+        if: steps.changes.outputs.plan == 'true'
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Init (remote state)
+        if: steps.changes.outputs.plan == 'true'
+        working-directory: infra/envs/prod
+        run: terraform init -reconfigure -backend-config="bucket=${{ vars.STATE_BUCKET_NAME }}" -backend-config="region=${{ vars.AWS_REGION }}"
+      - name: Plan
+        if: steps.changes.outputs.plan == 'true'
+        working-directory: infra/envs/prod
+        env:
+          TF_VAR_allowed_email: ${{ vars.ALLOWED_EMAIL }}
+          TF_VAR_google_client_id: ${{ secrets.GOOGLE_CLIENT_ID }}
+          TF_VAR_google_client_secret: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+        # -lock=false: the read-only plan role cannot write the state lock file.
+        run: terraform plan -input=false -lock=false
