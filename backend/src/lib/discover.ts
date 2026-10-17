@@ -1,32 +1,17 @@
-import { AppError } from './errors';
 import { parseFeed } from './feed';
 import { extractFeedLinks, extractPageMeta } from './html';
 import type { FetchResult, FetchText } from './http';
 import type { FeedCandidate, ParsedFeed } from './types';
-import { normalizeUrl } from './url';
+import { assertHttpUrl, normalizeUrl } from './url';
 
 export const PROBE_PATHS = ['feed', 'feed/', 'rss', 'rss.xml', 'atom.xml', 'index.xml', 'feed.xml'];
 
 const HOMEPAGE_TIMEOUT_MS = 8000;
 const LINK_TIMEOUT_MS = 5000;
-const MAX_URL_LENGTH = 2048;
 
 interface Found {
   url: string;
   feed: ParsedFeed;
-}
-
-function assertValidUrl(input: string): URL {
-  const invalid = new AppError(400, 'INVALID_URL', 'Enter a valid http(s) URL.');
-  if (input.length > MAX_URL_LENGTH) throw invalid;
-  let u: URL;
-  try {
-    u = new URL(input);
-  } catch {
-    throw invalid;
-  }
-  if (u.protocol !== 'http:' && u.protocol !== 'https:') throw invalid;
-  return u;
 }
 
 async function safeFetch(fetch: FetchText, url: string, timeoutMs: number) {
@@ -82,7 +67,7 @@ function toCandidate(
 }
 
 export async function discoverFeeds(inputUrl: string, fetch: FetchText): Promise<FeedCandidate[]> {
-  const input = assertValidUrl(inputUrl);
+  const input = new URL(assertHttpUrl(inputUrl));
   const res = await safeFetch(fetch, inputUrl, HOMEPAGE_TIMEOUT_MS);
 
   if (res) {

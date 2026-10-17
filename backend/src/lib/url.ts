@@ -1,4 +1,19 @@
 import { createHash } from 'node:crypto';
+import { AppError } from './errors';
+
+const MAX_URL_LENGTH = 2048;
+
+export function assertHttpUrl(url: unknown): string {
+  const invalid = new AppError(400, 'INVALID_URL', 'Enter a valid http(s) URL.');
+  if (typeof url !== 'string' || url.length > MAX_URL_LENGTH) throw invalid;
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') throw invalid;
+  } catch {
+    throw invalid;
+  }
+  return url;
+}
 
 export function normalizeUrl(url: string): string {
   const u = new URL(url);
