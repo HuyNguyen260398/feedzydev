@@ -20,7 +20,7 @@ export default function Header() {
     <header className="sticky top-0 z-20 border-b border-border bg-bg/85 backdrop-blur">
       <div className="mx-auto flex h-14 max-w-5xl items-center justify-between gap-2 px-3 sm:px-4">
         <Link href="/" className="font-mono text-base font-semibold whitespace-nowrap sm:text-lg">
-          {'> feed'}
+          {'> feedzy'}
           <span className="text-accent">dev</span>
           {'_'}
         </Link>

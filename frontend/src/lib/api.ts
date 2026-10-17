@@ -46,11 +46,13 @@ async function request<T>(
   return (await res.json()) as T;
 }
 
-export function getPosts(p: {
+export async function getPosts(p: {
   cursor?: string;
   sourceId?: string;
   limit?: number;
 }): Promise<Page<PublicPost>> {
+  // Inline comparison so Next inlines the env var and drops the mock chunk in normal builds.
+  if (process.env.NEXT_PUBLIC_MOCK === '1') return (await import('@/lib/mock')).mockPosts(p);
   const qs = new URLSearchParams();
   if (p.cursor) qs.set('cursor', p.cursor);
   if (p.sourceId) qs.set('sourceId', p.sourceId);
@@ -60,6 +62,7 @@ export function getPosts(p: {
 }
 
 export async function getSources(): Promise<PublicSource[]> {
+  if (process.env.NEXT_PUBLIC_MOCK === '1') return (await import('@/lib/mock')).mockSources();
   return (await request<{ items: PublicSource[] }>('/sources')).items;
 }
 

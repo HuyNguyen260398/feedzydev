@@ -9,5 +9,6 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./vitest.setup.ts'],
     include: ['test/**/*.test.{ts,tsx}'],
+    env: { TZ: 'Asia/Ho_Chi_Minh' },
   },
 });

@@ -56,3 +56,43 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Feed cards: lift + accent glow on hover and keyboard focus. */
+.fz-card {
+  transition:
+    transform 200ms ease-out,
+    border-color 200ms ease-out,
+    box-shadow 200ms ease-out;
+}
+.fz-card:hover,
+.fz-card:focus-visible {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--fz-accent) 55%, var(--fz-border));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--fz-accent) 25%, transparent),
+    0 14px 36px -14px color-mix(in srgb, var(--fz-accent) 55%, transparent);
+}
+.fz-card:focus-visible {
+  outline-offset: 3px;
+}
+
+/* Thumbnail placeholder: faint console grid over the source gradient. */
+.fz-placeholder {
+  position: relative;
+}
+.fz-placeholder::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgb(255 255 255 / 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(255 255 255 / 0.07) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fz-card:hover,
+  .fz-card:focus-visible {
+    transform: none;
+  }
+}
