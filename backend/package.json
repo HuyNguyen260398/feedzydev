@@ -8,8 +8,8 @@
     "test": "jest",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format": "prettier --ignore-path ../.prettierignore --ignore-path ../.gitignore --write .",
+    "format:check": "prettier --ignore-path ../.prettierignore --ignore-path ../.gitignore --check ."
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.1152.0",
