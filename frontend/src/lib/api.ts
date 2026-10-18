@@ -1,5 +1,12 @@
 import { getIdToken } from '@/lib/auth';
-import type { AdminSource, FeedCandidate, Page, PublicPost, PublicSource } from '@/lib/types';
+import type {
+  AdminSource,
+  CrawlSettings,
+  FeedCandidate,
+  Page,
+  PublicPost,
+  PublicSource,
+} from '@/lib/types';
 
 const BASE = '/api';
 
@@ -94,7 +101,7 @@ export async function addSource(i: {
 
 export async function updateSource(
   id: string,
-  patch: { name?: string; enabled?: boolean },
+  patch: { name?: string; enabled?: boolean; postsPerSource?: number | null },
 ): Promise<AdminSource> {
   if (process.env.NEXT_PUBLIC_MOCK === '1')
     return (await import('@/lib/mock')).mockUpdate(id, patch);
@@ -120,4 +127,17 @@ export async function triggerCrawl(sourceId?: string): Promise<void> {
     body: sourceId ? { sourceId } : {},
     admin: true,
   });
+}
+
+export async function getSettings(): Promise<CrawlSettings> {
+  if (process.env.NEXT_PUBLIC_MOCK === '1') return (await import('@/lib/mock')).mockGetSettings();
+  return request<CrawlSettings>('/admin/settings', { admin: true });
+}
+
+export async function saveSettings(s: {
+  postsPerSource: number;
+  crawlHours: number[];
+}): Promise<CrawlSettings> {
+  if (process.env.NEXT_PUBLIC_MOCK === '1') return (await import('@/lib/mock')).mockSaveSettings(s);
+  return request<CrawlSettings>('/admin/settings', { method: 'PUT', body: s, admin: true });
 }

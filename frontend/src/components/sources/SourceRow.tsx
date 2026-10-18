@@ -1,18 +1,24 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import type { KeyboardEvent } from 'react';
+import type { FocusEvent, KeyboardEvent } from 'react';
 import { ApiError, deleteSource, updateSource } from '@/lib/api';
+import { MAX_POSTS, MIN_POSTS } from '@/lib/settings';
 import { formatPostTime } from '@/lib/time';
 import type { AdminSource } from '@/lib/types';
 
 const CONFIRM_MS = 5000;
 
+export const ROW_GRID = 'md:grid-cols-[minmax(0,2fr)_minmax(0,1.3fr)_auto_auto_auto]';
+
 export default function SourceRow({
   source,
+  defaultPosts,
   onChange,
 }: {
   source: AdminSource;
+  /** Global postsPerSource, shown as the placeholder when there is no override. */
+  defaultPosts?: number;
   onChange: () => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -66,11 +72,28 @@ export default function SourceRow({
     else if (e.key === 'Escape') cancel();
   }
 
+  // Blank clears the override; the input is uncontrolled and re-keyed when the saved value changes.
+  function commitPosts(e: FocusEvent<HTMLInputElement> | KeyboardEvent<HTMLInputElement>) {
+    const input = e.currentTarget;
+    const current = source.postsPerSource ?? null;
+    const raw = input.value.trim();
+    const next = raw === '' ? null : Number(raw);
+    if (next !== null && !(Number.isInteger(next) && next >= MIN_POSTS && next <= MAX_POSTS)) {
+      setError(`Posts must be a whole number from ${MIN_POSTS} to ${MAX_POSTS}.`);
+      input.value = current === null ? '' : String(current);
+      return;
+    }
+    if (next === current) return;
+    void run(() => updateSource(source.sourceId, { postsPerSource: next }));
+  }
+
   const failed = source.lastStatus === 'error';
   const when = source.lastCrawledAt ? formatPostTime(source.lastCrawledAt, new Date()) : undefined;
 
   return (
-    <li className="rounded-xl border border-border bg-surface p-3 md:grid md:grid-cols-[minmax(0,2fr)_minmax(0,1.3fr)_auto_auto] md:items-center md:gap-4 md:rounded-none md:border-0 md:border-b md:bg-transparent md:px-2">
+    <li
+      className={`rounded-xl border border-border bg-surface p-3 md:grid ${ROW_GRID} md:items-center md:gap-4 md:rounded-none md:border-0 md:border-b md:bg-transparent md:px-2`}
+    >
       <div className="min-w-0">
         {editing ? (
           <input
@@ -126,6 +149,30 @@ export default function SourceRow({
       </div>
 
       <div className="mt-2 flex items-center justify-between gap-3 md:mt-0 md:contents">
+        <label className="flex items-center gap-2 font-mono text-xs text-muted">
+          <span className="md:sr-only">Posts</span>
+          <input
+            key={source.postsPerSource ?? 'default'}
+            type="number"
+            inputMode="numeric"
+            min={MIN_POSTS}
+            max={MAX_POSTS}
+            defaultValue={source.postsPerSource ?? ''}
+            placeholder={defaultPosts !== undefined ? String(defaultPosts) : ''}
+            aria-label={`Posts per crawl for ${source.name}`}
+            title={
+              source.postsPerSource !== undefined
+                ? 'Override for this source — clear to use the default'
+                : `Uses the default${defaultPosts !== undefined ? ` (${defaultPosts})` : ''}`
+            }
+            disabled={busy}
+            onBlur={commitPosts}
+            onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+            className={`min-h-11 w-16 rounded-lg border bg-bg px-2 text-center text-sm placeholder:text-muted/60 disabled:opacity-50 ${
+              source.postsPerSource !== undefined ? 'border-accent text-accent' : 'border-border'
+            }`}
+          />
+        </label>
         <button
           type="button"
           role="switch"

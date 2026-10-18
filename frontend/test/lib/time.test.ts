@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatPostTime, groupByDay, sinceFor } from '@/lib/time';
+import { formatHour, formatPostTime, groupByDay, sinceFor, zoneOffsetLabel } from '@/lib/time';
 import type { PublicPost } from '@/lib/types';
 
 const now = new Date('2026-10-17T10:00:00');
@@ -59,5 +59,15 @@ describe('sinceFor', () => {
   it('day ranges subtract whole days', () => {
     expect(sinceFor('3d', now)).toBe(new Date(now.getTime() - 3 * 86_400_000).toISOString());
     expect(sinceFor('30d', now)).toBe(new Date(now.getTime() - 30 * 86_400_000).toISOString());
+  });
+});
+
+describe('formatHour / zoneOffsetLabel', () => {
+  it('formats 12-hour clock labels', () => {
+    expect([0, 8, 12, 13, 23].map(formatHour)).toEqual(['12 AM', '8 AM', '12 PM', '1 PM', '11 PM']);
+  });
+  it('labels a zone by its GMT offset', () => {
+    expect(zoneOffsetLabel('Asia/Ho_Chi_Minh')).toBe('GMT+7');
+    expect(zoneOffsetLabel('Not/AZone')).toBe('Not/AZone');
   });
 });

@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import ErrorBanner from '@/components/ErrorBanner';
 import AddSourceForm from '@/components/sources/AddSourceForm';
+import CrawlSettingsPanel from '@/components/sources/CrawlSettingsPanel';
 import SignInPanel from '@/components/sources/SignInPanel';
 import SourcesList from '@/components/sources/SourcesList';
 import { ApiError, listAdminSources, triggerCrawl } from '@/lib/api';
 import { signOut, useAuth } from '@/lib/auth';
-import type { AdminSource } from '@/lib/types';
+import type { AdminSource, CrawlSettings } from '@/lib/types';
 
 const btn =
   'min-h-11 cursor-pointer rounded-lg border border-border bg-surface px-4 text-sm font-medium transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50';
@@ -32,6 +33,8 @@ export default function SourcesPage() {
   const [forbidden, setForbidden] = useState(false);
   const [notice, setNotice] = useState<string>();
   const [crawling, setCrawling] = useState(false);
+  const [defaultPosts, setDefaultPosts] = useState<number>();
+  const onSettings = useCallback((s: CrawlSettings) => setDefaultPosts(s.postsPerSource), []);
 
   const load = useCallback(async () => {
     try {
@@ -109,6 +112,8 @@ export default function SourcesPage() {
 
       <AddSourceForm onAdded={() => refresh()} />
 
+      <CrawlSettingsPanel onLoaded={onSettings} />
+
       <div className="flex flex-wrap items-center gap-3">
         <button type="button" onClick={() => void crawl()} disabled={crawling} className={btn}>
           Crawl now
@@ -123,7 +128,7 @@ export default function SourcesPage() {
       {error && <ErrorBanner message={error} onRetry={() => refresh()} />}
 
       {sources ? (
-        <SourcesList sources={sources} onChange={() => refresh()} />
+        <SourcesList sources={sources} defaultPosts={defaultPosts} onChange={() => refresh()} />
       ) : (
         !error && <Skeleton />
       )}
