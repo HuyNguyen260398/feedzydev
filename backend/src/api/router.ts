@@ -4,7 +4,15 @@ import { parseFeed } from '../lib/feed';
 import { discoverFeeds } from '../lib/discover';
 import type { FetchText } from '../lib/http';
 import type { PostsRepo } from '../lib/repo/posts';
+import type { SettingsRepo } from '../lib/repo/settings';
 import type { SourcesRepo } from '../lib/repo/sources';
+import {
+  CRAWL_TIMEZONE,
+  MAX_POSTS_PER_SOURCE,
+  MIN_POSTS_PER_SOURCE,
+  isValidHour,
+  isValidPostsPerSource,
+} from '../lib/settings';
 import type { PublicPost } from '../lib/types';
 import { assertHttpUrl } from '../lib/url';
 import { getOwnerEmail } from './auth';
@@ -13,6 +21,7 @@ import { fail, json } from './http';
 export interface ApiDeps {
   sources: SourcesRepo;
   posts: PostsRepo;
+  settings: SettingsRepo;
   fetchText: FetchText;
   invokeCrawl: (p: { sourceId?: string }) => Promise<void>;
   allowedEmail: string;
@@ -138,7 +147,7 @@ async function addSource(event: APIGatewayProxyEvent, deps: ApiDeps) {
 
 async function patchSource(event: APIGatewayProxyEvent, deps: ApiDeps, id: string) {
   const body = parseBody(event);
-  const patch: { name?: string; enabled?: boolean } = {};
+  const patch: { name?: string; enabled?: boolean; postsPerSource?: number | null } = {};
   if (body.name !== undefined) {
     if (typeof body.name !== 'string' || body.name.trim() === '') {
       throw new AppError(400, 'INVALID_INPUT', 'name must be a non-empty string.');
@@ -151,9 +160,34 @@ async function patchSource(event: APIGatewayProxyEvent, deps: ApiDeps, id: strin
     }
     patch.enabled = body.enabled;
   }
+  if (body.postsPerSource !== undefined) {
+    if (body.postsPerSource !== null && !isValidPostsPerSource(body.postsPerSource)) {
+      throw new AppError(400, 'INVALID_INPUT', POSTS_RANGE_MESSAGE);
+    }
+    patch.postsPerSource = body.postsPerSource;
+  }
   const updated = await deps.sources.update(id, patch);
   if (!updated) return fail(404, 'NOT_FOUND', 'Source not found.');
   return json(200, updated);
+}
+
+const POSTS_RANGE_MESSAGE = `postsPerSource must be an integer from ${MIN_POSTS_PER_SOURCE} to ${MAX_POSTS_PER_SOURCE}.`;
+
+async function getSettings(deps: ApiDeps) {
+  return json(200, { ...(await deps.settings.get()), timezone: CRAWL_TIMEZONE });
+}
+
+async function putSettings(event: APIGatewayProxyEvent, deps: ApiDeps) {
+  const body = parseBody(event);
+  if (!isValidPostsPerSource(body.postsPerSource)) {
+    throw new AppError(400, 'INVALID_INPUT', POSTS_RANGE_MESSAGE);
+  }
+  if (!Array.isArray(body.crawlHours) || !body.crawlHours.every(isValidHour)) {
+    throw new AppError(400, 'INVALID_INPUT', 'crawlHours must be a list of hours from 0 to 23.');
+  }
+  const crawlHours = [...new Set(body.crawlHours as number[])].sort((a, b) => a - b);
+  const saved = await deps.settings.put({ postsPerSource: body.postsPerSource, crawlHours });
+  return json(200, { ...saved, timezone: CRAWL_TIMEZONE });
 }
 
 async function deleteSource(deps: ApiDeps, id: string) {
@@ -172,6 +206,9 @@ async function routeAdmin(
   if (path === '/admin/sources') {
     if (method === 'GET') return json(200, { items: await deps.sources.list() });
     if (method === 'POST') return addSource(event, deps);
+  } else if (path === '/admin/settings') {
+    if (method === 'GET') return getSettings(deps);
+    if (method === 'PUT') return putSettings(event, deps);
   } else if (path === '/admin/sources/discover') {
     if (method === 'POST') return discover(event, deps);
   } else if (path === '/admin/crawl') {

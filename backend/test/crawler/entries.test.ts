@@ -1,7 +1,8 @@
-import { toPosts, MAX_POSTS_PER_SOURCE, RETENTION_DAYS } from '../../src/crawler/entries';
+import { toPosts, RETENTION_DAYS } from '../../src/crawler/entries';
 import type { FeedEntry, Source } from '../../src/lib/types';
 
 const now = new Date('2026-10-17T00:00:00Z');
+const LIMIT = 50;
 const source: Source = {
   sourceId: 's1',
   name: 'Src',
@@ -15,7 +16,7 @@ const e = (url: string | undefined, publishedAt?: string): FeedEntry =>
 
 describe('toPosts', () => {
   it('keeps recent, sets expiresAt', () => {
-    const [p] = toPosts([e('https://a.io/1', '2026-10-16T00:00:00Z')], source, now);
+    const [p] = toPosts([e('https://a.io/1', '2026-10-16T00:00:00Z')], source, now, LIMIT);
     expect(RETENTION_DAYS).toBe(90);
     expect(p.expiresAt).toBe(Date.parse('2026-10-16T00:00:00Z') / 1000 + 7776000);
     expect(p.feedKey).toBe('ALL');
@@ -29,13 +30,14 @@ describe('toPosts', () => {
       [e('https://a.io/1', '2026-10-03T00:00:00Z'), e('https://a.io/2', '2026-10-02T23:59:59Z')],
       source,
       now,
+      LIMIT,
     );
     expect(out.map((p) => p.url)).toEqual(['https://a.io/1']);
   });
 
   it('drops missing date or url', () => {
     expect(
-      toPosts([e('https://a.io/1'), e(undefined, '2026-10-16T00:00:00Z')], source, now),
+      toPosts([e('https://a.io/1'), e(undefined, '2026-10-16T00:00:00Z')], source, now, LIMIT),
     ).toEqual([]);
   });
 
@@ -44,17 +46,17 @@ describe('toPosts', () => {
       [e('https://a.io/1', '2026-10-17T12:00:00Z'), e('https://a.io/2', '2026-10-19T00:00:00Z')],
       source,
       now,
+      LIMIT,
     );
     expect(out).toHaveLength(1);
     expect(out[0].publishedAt).toBe('2026-10-17T00:00:00.000Z');
   });
 
-  it('keeps only the newest MAX_POSTS_PER_SOURCE, newest first', () => {
+  it('keeps only the newest `limit`, newest first', () => {
     const entries = Array.from({ length: 8 }, (_, i) =>
       e(`https://a.io/${i}`, `2026-10-${String(9 + ((i * 3) % 8)).padStart(2, '0')}T00:00:00Z`),
     );
-    const out = toPosts(entries, source, now);
-    expect(MAX_POSTS_PER_SOURCE).toBe(5);
+    const out = toPosts(entries, source, now, 5);
     expect(out.map((p) => p.publishedAt.slice(0, 10))).toEqual([
       '2026-10-16',
       '2026-10-15',
@@ -72,6 +74,7 @@ describe('toPosts', () => {
       ],
       source,
       now,
+      LIMIT,
     );
     expect(out).toHaveLength(1);
   });

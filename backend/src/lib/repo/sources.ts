@@ -80,9 +80,10 @@ export class SourcesRepo {
 
   async update(
     id: string,
-    patch: { name?: string; enabled?: boolean },
+    patch: { name?: string; enabled?: boolean; postsPerSource?: number | null },
   ): Promise<Source | undefined> {
     const sets: string[] = [];
+    const removes: string[] = [];
     const names: Record<string, string> = {};
     const values: Record<string, unknown> = {};
     if (patch.name !== undefined) {
@@ -95,16 +96,28 @@ export class SourcesRepo {
       names['#enabled'] = 'enabled';
       values[':enabled'] = patch.enabled;
     }
-    if (sets.length === 0) return this.get(id);
+    if (patch.postsPerSource !== undefined) {
+      names['#pps'] = 'postsPerSource';
+      if (patch.postsPerSource === null) removes.push('#pps');
+      else {
+        sets.push('#pps = :pps');
+        values[':pps'] = patch.postsPerSource;
+      }
+    }
+    if (sets.length === 0 && removes.length === 0) return this.get(id);
+    const expr = [
+      ...(sets.length ? [`SET ${sets.join(', ')}`] : []),
+      ...(removes.length ? [`REMOVE ${removes.join(', ')}`] : []),
+    ].join(' ');
     try {
       const res = await this.doc.send(
         new UpdateCommand({
           TableName: this.table,
           Key: { sourceId: id },
-          UpdateExpression: `SET ${sets.join(', ')}`,
+          UpdateExpression: expr,
           ConditionExpression: 'attribute_exists(sourceId)',
           ...(Object.keys(names).length ? { ExpressionAttributeNames: names } : {}),
-          ExpressionAttributeValues: values,
+          ...(Object.keys(values).length ? { ExpressionAttributeValues: values } : {}),
           ReturnValues: 'ALL_NEW',
         }),
       );

@@ -22,6 +22,15 @@ export interface Source {
   lastStatus?: 'ok' | 'error';
   lastError?: string;
   lastNewCount?: number;
+  /** Overrides Settings.postsPerSource for this source. */
+  postsPerSource?: number;
+}
+export interface Settings {
+  /** Newest posts kept per source per crawl. */
+  postsPerSource: number;
+  /** Local hours (0–23, CRAWL_TIMEZONE) at which the scheduled crawl runs; empty = off. */
+  crawlHours: number[];
+  updatedAt?: string;
 }
 export interface Post {
   postId: string;
