@@ -4,7 +4,16 @@ import type { FetchResult, FetchText } from './http';
 import type { FeedCandidate, ParsedFeed } from './types';
 import { assertHttpUrl, normalizeUrl } from './url';
 
-export const PROBE_PATHS = ['feed', 'feed/', 'rss', 'rss.xml', 'atom.xml', 'index.xml', 'feed.xml'];
+export const PROBE_PATHS = [
+  'feed',
+  'feed/',
+  'rss',
+  'rss.xml',
+  'atom.xml',
+  'index.xml',
+  'feed.xml',
+  'feed.atom',
+];
 
 const HOMEPAGE_TIMEOUT_MS = 8000;
 const LINK_TIMEOUT_MS = 5000;
@@ -86,9 +95,11 @@ export async function discoverFeeds(inputUrl: string, fetch: FetchText): Promise
   }
 
   if (found.length === 0) {
+    // Probe under the pasted path: '/blog' must yield '/blog/rss.xml', not '/rss.xml'.
+    const dir = new URL(input.pathname.replace(/\/?$/, '/'), input.origin);
     const urls = new Set<string>();
     for (const p of PROBE_PATHS) {
-      urls.add(new URL(p, inputUrl).toString());
+      urls.add(new URL(p, dir).toString());
     }
     for (const p of PROBE_PATHS) {
       urls.add(new URL('/' + p, input.origin).toString());

@@ -84,10 +84,14 @@ const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export async function mockPosts(p: {
   cursor?: string;
   sourceId?: string;
+  since?: string;
   limit?: number;
 }): Promise<Page<PublicPost>> {
   await delay(400);
-  const all = buildPosts().filter((post) => !p.sourceId || post.sourceId === p.sourceId);
+  const all = buildPosts().filter(
+    (post) =>
+      (!p.sourceId || post.sourceId === p.sourceId) && (!p.since || post.publishedAt >= p.since),
+  );
   const start = p.cursor ? Number(p.cursor) : 0;
   const end = start + (p.limit ?? 30);
   return {

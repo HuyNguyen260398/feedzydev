@@ -5,12 +5,10 @@ import type { PublicPost } from '@/lib/types';
 export default function PostCard({
   post,
   variant,
-  iconUrl,
   now,
 }: {
   post: PublicPost;
   variant: 'featured' | 'tile';
-  iconUrl?: string;
   now: Date;
 }) {
   const featured = variant === 'featured';
@@ -25,8 +23,6 @@ export default function PostCard({
     >
       <Thumbnail
         src={post.thumbnailUrl}
-        sourceName={post.sourceName}
-        iconUrl={iconUrl}
         alt=""
         className={featured ? 'w-full' : 'w-32 shrink-0 self-start sm:w-full'}
       />

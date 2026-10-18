@@ -65,6 +65,26 @@ test('probes paths when nothing advertised', async () => {
   expect(r.map((c) => c.feedUrl)).toEqual(['https://site.dev/blog/rss.xml']);
 });
 
+test('probes under a path without a trailing slash', async () => {
+  const r = await discoverFeeds(
+    'https://site.dev/blog',
+    fake({ 'https://site.dev/blog': page(''), 'https://site.dev/blog/rss.xml': xml }),
+  );
+  expect(r.map((c) => c.feedUrl)).toEqual(['https://site.dev/blog/rss.xml']);
+});
+
+test('probes when every advertised feed is broken', async () => {
+  const r = await discoverFeeds(
+    'https://site.dev/blog',
+    fake({
+      'https://site.dev/blog': page(alt('https://site.dev/blog/feed')),
+      'https://site.dev/blog/feed': page(''),
+      'https://site.dev/blog/rss': xml,
+    }),
+  );
+  expect(r.map((c) => c.feedUrl)).toEqual(['https://site.dev/blog/rss']);
+});
+
 test('falls back to site-root probes', async () => {
   const r = await discoverFeeds(
     'https://site.dev/blog/',

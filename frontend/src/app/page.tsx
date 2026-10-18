@@ -4,24 +4,29 @@ import { useEffect, useRef, useState } from 'react';
 import EmptyState from '@/components/EmptyState';
 import ErrorBanner from '@/components/ErrorBanner';
 import FeedGrid from '@/components/FeedGrid';
-import FilterChips from '@/components/FilterChips';
+import FilterBar from '@/components/FilterBar';
 import SkeletonCard from '@/components/SkeletonCard';
 import { usePosts } from '@/hooks/usePosts';
 import { getSources } from '@/lib/api';
-import { groupByDay } from '@/lib/time';
+import { groupByDay, sinceFor, type DateRange } from '@/lib/time';
 import type { PublicSource } from '@/lib/types';
 
 export default function FeedPage() {
   const [sourceId, setSourceId] = useState<string>();
+  // `since` is fixed when the range is picked so the query key stays stable across renders.
+  const [date, setDate] = useState<{ range: DateRange; since?: string }>({ range: 'any' });
   const [sources, setSources] = useState<PublicSource[]>([]);
-  const { posts, loading, error, done, loadMore, retry } = usePosts(sourceId);
+  const { posts, loading, error, done, loadMore, retry } = usePosts({
+    sourceId,
+    since: date.since,
+  });
   const sentinel = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let live = true;
     getSources().then(
       (items) => live && setSources(items),
-      () => {}, // chips are optional; the feed still works without them
+      () => {}, // the source filter is optional; the feed still works without it
     );
     return () => {
       live = false;
@@ -48,9 +53,13 @@ export default function FeedPage() {
   return (
     <div className="space-y-5 sm:space-y-6">
       <h1 className="sr-only">Latest posts</h1>
-      {sources.length > 0 && (
-        <FilterChips sources={sources} value={sourceId} onChange={setSourceId} />
-      )}
+      <FilterBar
+        sources={sources}
+        sourceId={sourceId}
+        range={date.range}
+        onSourceChange={setSourceId}
+        onRangeChange={(range) => setDate({ range, since: sinceFor(range, new Date()) })}
+      />
 
       {error && <ErrorBanner message={error} onRetry={retry} />}
 
@@ -68,9 +77,11 @@ export default function FeedPage() {
         </div>
       )}
 
-      {!hasPosts && !loading && !error && <EmptyState />}
+      {!hasPosts && !loading && !error && (
+        <EmptyState filtered={sourceId !== undefined || date.range !== 'any'} />
+      )}
 
-      {hasPosts && <FeedGrid groups={groups} sources={sources} now={now} />}
+      {hasPosts && <FeedGrid groups={groups} now={now} />}
 
       {canLoadMore && (
         <div ref={sentinel} className="flex justify-center pt-2">

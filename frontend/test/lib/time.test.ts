@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatPostTime, groupByDay } from '@/lib/time';
+import { formatPostTime, groupByDay, sinceFor } from '@/lib/time';
 import type { PublicPost } from '@/lib/types';
 
 const now = new Date('2026-10-17T10:00:00');
@@ -46,5 +46,18 @@ describe('groupByDay', () => {
     expect(groups.map((g) => g.posts.length)).toEqual([2, 1, 1]);
     expect(groups.map((g) => g.key)).toEqual(['2026-10-17', '2026-10-16', '2026-10-14']);
     expect(groups[0].posts.map((p) => p.postId)).toEqual(['a', 'b']);
+  });
+});
+
+describe('sinceFor', () => {
+  it('any → undefined', () => {
+    expect(sinceFor('any', now)).toBeUndefined();
+  });
+  it('today starts at local midnight', () => {
+    expect(sinceFor('today', now)).toBe(iso('2026-10-17T00:00:00'));
+  });
+  it('day ranges subtract whole days', () => {
+    expect(sinceFor('3d', now)).toBe(new Date(now.getTime() - 3 * 86_400_000).toISOString());
+    expect(sinceFor('30d', now)).toBe(new Date(now.getTime() - 30 * 86_400_000).toISOString());
   });
 });

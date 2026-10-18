@@ -45,14 +45,20 @@ export class PostsRepo {
     limit: number;
     cursor?: string;
     sourceId?: string;
+    /** ISO timestamp; only posts published at or after it. */
+    since?: string;
   }): Promise<{ items: Post[]; nextCursor?: string }> {
     const bySource = q.sourceId !== undefined;
+    const sinceCond = q.since !== undefined ? ' AND publishedAt >= :since' : '';
     const res = await this.doc.send(
       new QueryCommand({
         TableName: this.table,
         IndexName: bySource ? 'bySource' : 'byPublished',
-        KeyConditionExpression: bySource ? 'sourceId = :s' : 'feedKey = :k',
-        ExpressionAttributeValues: bySource ? { ':s': q.sourceId } : { ':k': 'ALL' },
+        KeyConditionExpression: (bySource ? 'sourceId = :s' : 'feedKey = :k') + sinceCond,
+        ExpressionAttributeValues: {
+          ...(bySource ? { ':s': q.sourceId } : { ':k': 'ALL' }),
+          ...(q.since !== undefined ? { ':since': q.since } : {}),
+        },
         ScanIndexForward: false,
         Limit: q.limit,
         ...(q.cursor ? { ExclusiveStartKey: decodeCursor(q.cursor) } : {}),

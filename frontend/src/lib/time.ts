@@ -65,3 +65,22 @@ export function groupByDay(posts: PublicPost[], now: Date): DayGroup[] {
   }
   return groups;
 }
+
+export const DATE_RANGES = [
+  { value: 'any', label: 'Any time' },
+  { value: 'today', label: 'Today' },
+  { value: '3d', label: 'Past 3 days' },
+  { value: '7d', label: 'Past week' },
+  { value: '30d', label: 'Past month' },
+] as const;
+
+export type DateRange = (typeof DATE_RANGES)[number]['value'];
+
+/** ISO lower bound for a date range ('today' starts at local midnight), or undefined for 'any'. */
+export function sinceFor(range: DateRange, now: Date): string | undefined {
+  if (range === 'any') return undefined;
+  if (range === 'today') {
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+  }
+  return new Date(now.getTime() - Number.parseInt(range, 10) * DAY).toISOString();
+}

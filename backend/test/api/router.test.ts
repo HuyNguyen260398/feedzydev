@@ -115,6 +115,18 @@ describe('public routes', () => {
     expect(m.posts.listPage).toHaveBeenLastCalledWith({ limit: 1 });
   });
 
+  test('since is normalised to ISO; garbage gives 400', async () => {
+    const m = mk();
+    await route(ev('GET', '/posts', { query: { since: '2026-10-11T00:00:00+07:00' } }), m.deps);
+    expect(m.posts.listPage).toHaveBeenLastCalledWith({
+      limit: 30,
+      since: '2026-10-10T17:00:00.000Z',
+    });
+    const r = await route(ev('GET', '/posts', { query: { since: 'yesterday' } }), m.deps);
+    expect(r.statusCode).toBe(400);
+    expect(parse(r).error.code).toBe('INVALID_INPUT');
+  });
+
   test('bad cursor gives 400 INVALID_CURSOR', async () => {
     const m = mk();
     m.posts.listPage.mockImplementation(async (...args: unknown[]) => {

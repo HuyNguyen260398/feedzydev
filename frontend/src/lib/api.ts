@@ -49,6 +49,7 @@ async function request<T>(
 export async function getPosts(p: {
   cursor?: string;
   sourceId?: string;
+  since?: string;
   limit?: number;
 }): Promise<Page<PublicPost>> {
   // Inline comparison so Next inlines the env var and drops the mock chunk in normal builds.
@@ -56,6 +57,7 @@ export async function getPosts(p: {
   const qs = new URLSearchParams();
   if (p.cursor) qs.set('cursor', p.cursor);
   if (p.sourceId) qs.set('sourceId', p.sourceId);
+  if (p.since) qs.set('since', p.since);
   if (p.limit !== undefined) qs.set('limit', String(p.limit));
   const q = qs.toString();
   return request<Page<PublicPost>>(`/posts${q ? `?${q}` : ''}`);

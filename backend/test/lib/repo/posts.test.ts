@@ -87,6 +87,20 @@ describe('PostsRepo', () => {
     expect(input.ExpressionAttributeValues?.[':s']).toBe('s1');
   });
 
+  it('listPage since adds a publishedAt key condition on either index', async () => {
+    ddb.on(QueryCommand).resolves({ Items: [] });
+    await repo.listPage({ limit: 10, since: '2026-10-10T00:00:00.000Z' });
+    await repo.listPage({ limit: 10, sourceId: 's1', since: '2026-10-10T00:00:00.000Z' });
+    const [global, bySource] = ddb.commandCalls(QueryCommand).map((c) => c.args[0].input);
+    expect(global.KeyConditionExpression).toBe('feedKey = :k AND publishedAt >= :since');
+    expect(global.ExpressionAttributeValues).toEqual({
+      ':k': 'ALL',
+      ':since': '2026-10-10T00:00:00.000Z',
+    });
+    expect(bySource.KeyConditionExpression).toBe('sourceId = :s AND publishedAt >= :since');
+    expect(bySource.ExpressionAttributeValues?.[':s']).toBe('s1');
+  });
+
   it('deleteBySource batches by 25', async () => {
     const items = (from: number, n: number) =>
       Array.from({ length: n }, (_, i) => ({ postId: `p${from + i}` }));

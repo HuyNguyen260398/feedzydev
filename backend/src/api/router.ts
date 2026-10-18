@@ -43,12 +43,24 @@ function parseLimit(raw: string | undefined): number {
   return Math.min(MAX_LIMIT, Math.max(1, n));
 }
 
+function parseSince(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const ms = Date.parse(raw);
+  if (Number.isNaN(ms)) {
+    throw new AppError(400, 'INVALID_INPUT', 'since must be an ISO 8601 timestamp.');
+  }
+  // Normalise so it compares correctly against the stored ISO publishedAt strings.
+  return new Date(ms).toISOString();
+}
+
 async function listPosts(event: APIGatewayProxyEvent, deps: ApiDeps) {
   const q = event.queryStringParameters ?? {};
+  const since = parseSince(q.since);
   const page = await deps.posts.listPage({
     limit: parseLimit(q.limit),
     ...(q.cursor ? { cursor: q.cursor } : {}),
     ...(q.sourceId ? { sourceId: q.sourceId } : {}),
+    ...(since ? { since } : {}),
   });
   const items: PublicPost[] = page.items.map((p) => ({
     postId: p.postId,

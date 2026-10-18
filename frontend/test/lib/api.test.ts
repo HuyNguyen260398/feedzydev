@@ -19,8 +19,10 @@ afterEach(() => vi.unstubAllGlobals());
 describe('api', () => {
   it('getPosts builds query', async () => {
     fetchMock.mockResolvedValue(reply(200, { items: [] }));
-    await getPosts({ cursor: 'c', sourceId: 's' });
-    expect(fetchMock.mock.calls[0][0]).toBe('/api/posts?cursor=c&sourceId=s');
+    await getPosts({ cursor: 'c', sourceId: 's', since: '2026-10-10T00:00:00.000Z' });
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      '/api/posts?cursor=c&sourceId=s&since=2026-10-10T00%3A00%3A00.000Z',
+    );
   });
 
   it('admin calls send raw id token', async () => {

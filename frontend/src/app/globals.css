@@ -76,20 +76,6 @@ body {
   outline-offset: 3px;
 }
 
-/* Thumbnail placeholder: faint console grid over the source gradient. */
-.fz-placeholder {
-  position: relative;
-}
-.fz-placeholder::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background-image:
-    linear-gradient(rgb(255 255 255 / 0.07) 1px, transparent 1px),
-    linear-gradient(90deg, rgb(255 255 255 / 0.07) 1px, transparent 1px);
-  background-size: 20px 20px;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .fz-card:hover,
   .fz-card:focus-visible {
