@@ -62,6 +62,20 @@ describe('AddSourceForm', () => {
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
   });
 
+  it('sends the candidate iconUrl when present', async () => {
+    vi.mocked(discover).mockResolvedValue([{ ...c1, iconUrl: 'https://a.example.com/i.png' }]);
+    vi.mocked(addSource).mockResolvedValue({} as never);
+    render(<AddSourceForm onAdded={vi.fn()} />);
+    await submitUrl();
+    await screen.findAllByRole('checkbox');
+    fireEvent.click(screen.getByRole('button', { name: 'Add selected (1)' }));
+    await waitFor(() => expect(addSource).toHaveBeenCalledTimes(1));
+    expect(addSource).toHaveBeenCalledWith({
+      feedUrl: c1.feedUrl,
+      iconUrl: 'https://a.example.com/i.png',
+    });
+  });
+
   it('shows NO_FEED_FOUND message', async () => {
     const msg = 'No RSS/Atom feed found at this URL — try pasting the feed URL directly.';
     vi.mocked(discover).mockRejectedValue(new ApiError(422, 'NO_FEED_FOUND', msg));

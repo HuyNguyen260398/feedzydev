@@ -92,6 +92,7 @@ async function discover(event: APIGatewayProxyEvent, deps: ApiDeps) {
 async function addSource(event: APIGatewayProxyEvent, deps: ApiDeps) {
   const body = parseBody(event);
   const feedUrl = assertHttpUrl(body.feedUrl);
+  const iconUrl = body.iconUrl === undefined ? undefined : assertHttpUrl(body.iconUrl);
   if (await deps.sources.findByFeedUrl(feedUrl)) {
     return fail(409, 'DUPLICATE_SOURCE', 'This feed has already been added.');
   }
@@ -112,8 +113,14 @@ async function addSource(event: APIGatewayProxyEvent, deps: ApiDeps) {
     name,
     feedUrl,
     siteUrl: feed.siteUrl ?? url.origin,
+    ...(iconUrl ? { iconUrl } : {}),
   });
-  await deps.invokeCrawl({ sourceId: source.sourceId });
+  try {
+    await deps.invokeCrawl({ sourceId: source.sourceId });
+  } catch (err) {
+    // The source exists; the next scheduled crawl will pick it up.
+    console.error('invokeCrawl failed after create', err);
+  }
   return json(201, source);
 }
 

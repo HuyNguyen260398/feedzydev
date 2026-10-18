@@ -48,7 +48,7 @@ export default function AddSourceForm({ onAdded }: { onAdded: () => void }) {
         continue;
       }
       try {
-        await addSource({ feedUrl: c.feedUrl });
+        await addSource({ feedUrl: c.feedUrl, ...(c.iconUrl ? { iconUrl: c.iconUrl } : {}) });
         added++;
       } catch (err) {
         remaining.push(c);

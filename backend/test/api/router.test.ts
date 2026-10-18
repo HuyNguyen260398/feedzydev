@@ -48,8 +48,9 @@ function mk() {
     list: jest.fn(async () => [src(), src({ sourceId: 'S2', enabled: false, iconUrl: 'i' })]),
     get: jest.fn(async (id: string) => (id === 'S1' ? src() : undefined)),
     findByFeedUrl: jest.fn(async () => undefined as Source | undefined),
-    create: jest.fn(async (i: { name: string; siteUrl: string; feedUrl: string }) =>
-      src({ ...i, sourceId: 'NEW' }),
+    create: jest.fn(
+      async (i: { name: string; siteUrl: string; feedUrl: string; iconUrl?: string }) =>
+        src({ ...i, sourceId: 'NEW' }),
     ),
     update: jest.fn(async (id: string) => (id === 'S1' ? src() : undefined)),
     remove: jest.fn(async () => {
@@ -302,6 +303,43 @@ describe('admin routes', () => {
       siteUrl: 'https://b.example/',
     });
     expect(m.invokeCrawl).toHaveBeenCalledWith({ sourceId: 'NEW' });
+    expect(parse(r).sourceId).toBe('NEW');
+  });
+
+  test('add source: iconUrl is stored; invalid iconUrl is 400', async () => {
+    const m = mk();
+    const r = await route(
+      ev('POST', '/admin/sources', {
+        claims: owner,
+        body: JSON.stringify({
+          feedUrl: 'https://b.example/feed',
+          iconUrl: 'https://b.example/i.png',
+        }),
+      }),
+      m.deps,
+    );
+    expect(r.statusCode).toBe(201);
+    expect(m.sources.create.mock.calls[0][0].iconUrl).toBe('https://b.example/i.png');
+    const bad = await route(
+      ev('POST', '/admin/sources', {
+        claims: owner,
+        body: JSON.stringify({ feedUrl: 'https://b.example/feed', iconUrl: 'javascript:x' }),
+      }),
+      mk().deps,
+    );
+    expect(bad.statusCode).toBe(400);
+  });
+
+  test('add source: crawl-trigger failure still returns 201', async () => {
+    const m = mk();
+    m.invokeCrawl.mockRejectedValueOnce(new Error('boom'));
+    const spy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    const r = await route(
+      ev('POST', '/admin/sources', { claims: owner, body: '{"feedUrl":"https://b.example/feed"}' }),
+      m.deps,
+    );
+    spy.mockRestore();
+    expect(r.statusCode).toBe(201);
     expect(parse(r).sourceId).toBe('NEW');
   });
 

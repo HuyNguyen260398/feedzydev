@@ -81,7 +81,11 @@ export async function discover(url: string): Promise<FeedCandidate[]> {
   return r.candidates;
 }
 
-export async function addSource(i: { feedUrl: string; name?: string }): Promise<AdminSource> {
+export async function addSource(i: {
+  feedUrl: string;
+  name?: string;
+  iconUrl?: string;
+}): Promise<AdminSource> {
   if (process.env.NEXT_PUBLIC_MOCK === '1') return (await import('@/lib/mock')).mockAdd(i);
   return request<AdminSource>('/admin/sources', { method: 'POST', body: i, admin: true });
 }

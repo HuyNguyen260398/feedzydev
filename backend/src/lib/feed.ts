@@ -97,7 +97,9 @@ function rssAuthor(s: string): string | undefined {
   const t = s.trim();
   if (!t) return undefined;
   const m = /\(([^)]+)\)\s*$/.exec(t);
-  return (m ? m[1] : t).trim() || undefined;
+  const name = (m ? m[1] : t).trim();
+  if (!name || /^[^\s@]+@[^\s@]+$/.test(name)) return undefined;
+  return name;
 }
 
 function atomLink(links: Node[]): string | undefined {

@@ -63,3 +63,14 @@ test.each(['aws-devops.xml', 'kubernetes.xml'])('real feed %s parses', (n) => {
     expect(e.publishedAt).toBeDefined();
   }
 });
+
+test('rss: bare email author is omitted, "email (Name)" keeps the name', () => {
+  const rss = (a: string) =>
+    `<?xml version="1.0"?><rss version="2.0"><channel><title>T</title><item><title>A</title><link>https://b.example/a</link><author>${a}</author></item></channel></rss>`;
+  expect(
+    parseFeed(rss('jane@example.com'), 'https://b.example/f')!.entries[0].author,
+  ).toBeUndefined();
+  expect(
+    parseFeed(rss('jane@example.com (Jane Doe)'), 'https://b.example/f')!.entries[0].author,
+  ).toBe('Jane Doe');
+});
