@@ -96,7 +96,11 @@ module "crawler" {
   timeout                  = 300
   memory_size              = 512
   reserved_concurrency     = 1
-  policy_json              = data.aws_iam_policy_document.crawler.json
+  environment = {
+    SOURCES_TABLE = module.data.sources_table_name
+    POSTS_TABLE   = module.data.posts_table_name
+  }
+  policy_json = data.aws_iam_policy_document.crawler.json
 }
 
 module "presignup" {
