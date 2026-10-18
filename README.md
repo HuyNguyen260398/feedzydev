@@ -51,6 +51,8 @@ changed) runs `terraform plan` with the read-only OIDC role.
 
 ## Setup runbook
 
+For the first deployment, follow the step-by-step [go-live runbook](docs/runbooks/go-live.md) (who runs what, checkpoints, troubleshooting, rollback). The summary below is the reference version.
+
 Prerequisites: AWS CLI authenticated to the target account with admin-level
 rights (first apply only), Terraform >= 1.15, `gh` authenticated to the repo,
 Node + pnpm, and a Route 53 hosted zone for `nghuy.link`.
