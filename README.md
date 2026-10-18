@@ -20,7 +20,11 @@ Terraform, GitHub Actions with OIDC (no long-lived AWS keys).
 
 ## Live
 
-Pending go-live verification.
+https://feedzydev-claude.nghuy.link — live since 2026-10-18.
+
+- Verified: edge and API checks, owner Google sign-in, non-owner sign-in rejected, daily crawl schedule (07:00 `Asia/Ho_Chi_Minh`), first crawl (`totalNew: 100`).
+- Discovery on `https://aws.amazon.com/blogs/` returns one feed, AWS "Recent Announcements" (`https://aws.amazon.com/about-aws/whats-new/recent/feed/`): the page advertises no blog feed of its own. For blog posts, add the per-blog feeds (e.g. `https://aws.amazon.com/blogs/devops/feed/`).
+- The repository uses GitHub's immutable OIDC subjects (`repo:owner@id/name@id:...`); the bootstrap trust policy matches that via `github_sub_prefix`.
 
 ## Local development
 
