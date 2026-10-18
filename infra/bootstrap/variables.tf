@@ -16,10 +16,10 @@ variable "site_bucket_name" {
   default     = "feedzydev-claude-prod-site-010382427026"
 }
 
-variable "github_repo" {
+variable "github_sub_prefix" {
   type        = string
-  description = "GitHub repository (owner/name) allowed to assume the CI roles."
-  default     = "HuyNguyen260398/feedzydev"
+  description = "OIDC sub prefix of the repository allowed to assume the CI roles. The repo uses immutable subjects (owner@id/name@id); see `gh api repos/OWNER/REPO/actions/oidc/customization/sub`."
+  default     = "repo:HuyNguyen260398@22511283/feedzydev@1421601952"
 }
 
 variable "deploy_branch" {

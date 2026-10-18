@@ -62,8 +62,8 @@ locals {
   account_id = data.aws_caller_identity.current.account_id
   prefix     = var.name_prefix
   oidc_arn   = data.aws_iam_openid_connect_provider.github.arn
-  branch_sub = "repo:${var.github_repo}:ref:refs/heads/${var.deploy_branch}"
-  pr_sub     = "repo:${var.github_repo}:pull_request"
+  branch_sub = "${var.github_sub_prefix}:ref:refs/heads/${var.deploy_branch}"
+  pr_sub     = "${var.github_sub_prefix}:pull_request"
   state_arn  = aws_s3_bucket.state.arn
   site_arn   = "arn:aws:s3:::${var.site_bucket_name}"
 }
