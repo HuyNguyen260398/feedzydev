@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import PostCard from '@/components/PostCard';
+import { DEFAULT_THUMBNAIL } from '@/components/Thumbnail';
 import type { PublicPost } from '@/lib/types';
 
 const now = new Date('2026-10-17T10:00:00');
@@ -36,22 +37,20 @@ describe('PostCard', () => {
     expect(screen.queryByText('Jane Doe')).not.toBeInTheDocument();
   });
 
-  it('falls back to placeholder when image errors', () => {
+  it('falls back to the default thumbnail when the image errors', () => {
     const { container } = render(<PostCard post={base} variant="featured" now={now} />);
     const img = container.querySelector('img');
-    expect(img).not.toBeNull();
+    expect(img).toHaveAttribute('src', base.thumbnailUrl);
     expect(img).toHaveAttribute('loading', 'lazy');
     expect(img).toHaveAttribute('referrerpolicy', 'no-referrer');
     fireEvent.error(img!);
-    expect(container.querySelector('img')).toBeNull();
-    expect(screen.getByText('K')).toBeInTheDocument();
+    expect(container.querySelector('img')).toHaveAttribute('src', DEFAULT_THUMBNAIL);
   });
 
-  it('placeholder when no thumbnailUrl', () => {
+  it('uses the default thumbnail when there is no thumbnailUrl', () => {
     const { container } = render(
       <PostCard post={{ ...base, thumbnailUrl: undefined }} variant="tile" now={now} />,
     );
-    expect(container.querySelector('img')).toBeNull();
-    expect(screen.getByText('K')).toBeInTheDocument();
+    expect(container.querySelector('img')).toHaveAttribute('src', DEFAULT_THUMBNAIL);
   });
 });

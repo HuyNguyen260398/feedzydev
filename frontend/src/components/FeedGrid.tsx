@@ -1,17 +1,7 @@
 import PostCard from '@/components/PostCard';
 import type { DayGroup } from '@/lib/time';
-import type { PublicSource } from '@/lib/types';
 
-export default function FeedGrid({
-  groups,
-  sources,
-  now,
-}: {
-  groups: DayGroup[];
-  sources: PublicSource[];
-  now: Date;
-}) {
-  const icons = new Map(sources.map((s) => [s.sourceId, s.iconUrl]));
+export default function FeedGrid({ groups, now }: { groups: DayGroup[]; now: Date }) {
   return (
     <div className="space-y-6 sm:space-y-8">
       {groups.map((group, gi) => (
@@ -34,12 +24,7 @@ export default function FeedGrid({
               const featured = gi === 0 && i === 0;
               return (
                 <li key={post.postId} className={featured ? 'sm:col-span-2 lg:row-span-2' : ''}>
-                  <PostCard
-                    post={post}
-                    variant={featured ? 'featured' : 'tile'}
-                    iconUrl={icons.get(post.sourceId)}
-                    now={now}
-                  />
+                  <PostCard post={post} variant={featured ? 'featured' : 'tile'} now={now} />
                 </li>
               );
             })}

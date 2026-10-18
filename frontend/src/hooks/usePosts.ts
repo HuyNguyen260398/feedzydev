@@ -26,16 +26,25 @@ export interface UsePosts {
   retry(): void;
 }
 
-export function usePosts(sourceId?: string): UsePosts {
-  const [state, setState] = useState<State>(() => initial(sourceId));
+export interface PostFilter {
+  sourceId?: string;
+  since?: string;
+}
+
+const keyOf = (f: PostFilter) => `${f.sourceId ?? ''}|${f.since ?? ''}`;
+
+export function usePosts({ sourceId, since }: PostFilter = {}): UsePosts {
+  const filterKey = keyOf({ sourceId, since });
+  const [state, setState] = useState<State>(() => initial(filterKey));
   const reqId = useRef(0);
   const pending = useRef(false);
 
   // Only the latest request may write state; older responses are dropped.
-  const run = useCallback((key: string | undefined, cursor: string | undefined) => {
+  const run = useCallback((filter: PostFilter, cursor: string | undefined) => {
     const id = ++reqId.current;
+    const key = keyOf(filter);
     pending.current = true;
-    getPosts({ sourceId: key, cursor, limit: PAGE_SIZE }).then(
+    getPosts({ ...filter, cursor, limit: PAGE_SIZE }).then(
       (page) => {
         if (id !== reqId.current) return;
         pending.current = false;
@@ -60,22 +69,22 @@ export function usePosts(sourceId?: string): UsePosts {
   }, []);
 
   // Starting a new first-page request supersedes any in-flight one (see reqId).
-  useEffect(() => run(sourceId, undefined), [sourceId, run]);
+  useEffect(() => run({ sourceId, since }, undefined), [sourceId, since, run]);
 
-  // Until the first page for a new sourceId lands, present a fresh loading state.
-  const view = state.key === sourceId ? state : initial(sourceId);
+  // Until the first page for a new filter lands, present a fresh loading state.
+  const view = state.key === filterKey ? state : initial(filterKey);
 
   const loadMore = useCallback(() => {
     if (pending.current || view.done || view.error || !view.nextCursor) return;
     setState((s) => ({ ...s, loading: true }));
-    run(sourceId, view.nextCursor);
-  }, [run, sourceId, view.done, view.error, view.nextCursor]);
+    run({ sourceId, since }, view.nextCursor);
+  }, [run, sourceId, since, view.done, view.error, view.nextCursor]);
 
   const retry = useCallback(() => {
     if (pending.current) return;
     setState((s) => ({ ...s, loading: true, error: undefined }));
-    run(sourceId, view.posts.length > 0 ? view.nextCursor : undefined);
-  }, [run, sourceId, view.posts.length, view.nextCursor]);
+    run({ sourceId, since }, view.posts.length > 0 ? view.nextCursor : undefined);
+  }, [run, sourceId, since, view.posts.length, view.nextCursor]);
 
   return {
     posts: view.posts,

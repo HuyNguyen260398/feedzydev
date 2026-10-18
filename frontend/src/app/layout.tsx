@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Inter, JetBrains_Mono } from 'next/font/google';
+import BackToTop from '@/components/BackToTop';
 import Header from '@/components/Header';
 import Providers from '@/components/Providers';
 import './globals.css';
@@ -28,6 +29,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Providers>
           <Header />
           <main className="mx-auto max-w-5xl px-3 py-6 sm:px-4">{children}</main>
+          <BackToTop />
         </Providers>
       </body>
     </html>
