@@ -85,7 +85,7 @@ jobs:
       - name: Sync hashed assets to S3
         run: |
           aws s3 sync frontend/out/_next/static "s3://${{ steps.tf.outputs.bucket }}/_next/static" \
-            --delete --cache-control "public,max-age=31536000,immutable"
+            --cache-control "public,max-age=31536000,immutable"
 
       - name: Sync everything else to S3
         run: |
@@ -96,4 +96,4 @@ jobs:
         run: aws cloudfront create-invalidation --distribution-id "${{ steps.tf.outputs.dist_id }}" --paths "/*"
 
       - name: Smoke test
-        run: curl -fsS "https://feedzydev-claude.nghuy.link/api/posts?limit=1"
+        run: curl -fsS --retry 5 --retry-delay 10 --retry-all-errors "https://feedzydev-claude.nghuy.link/api/posts?limit=1"

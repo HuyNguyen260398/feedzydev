@@ -88,8 +88,6 @@ existing names. Values come from the bootstrap outputs and the Google client.
 ```bash
 gh variable set AWS_REGION            --body "ap-southeast-1"
 gh variable set STATE_BUCKET_NAME     --body "feedzydev-claude-tfstate-010382427026"
-gh variable set SITE_BUCKET_NAME      --body "feedzydev-claude-prod-site-010382427026"
-gh variable set COGNITO_DOMAIN_PREFIX --body "feedzydev-claude-010382427026"
 gh variable set ALLOWED_EMAIL         --body "huynguyen260398@gmail.com"
 
 gh secret set AWS_PLAN_ROLE_ARN   --body "$(cd infra/bootstrap && terraform output -raw plan_role_arn)"
@@ -137,6 +135,10 @@ checked to respond.
 cd infra/envs/prod
 terraform init -backend-config="bucket=feedzydev-claude-tfstate-010382427026" -backend-config="region=ap-southeast-1"
 aws s3 rm s3://feedzydev-claude-prod-site-010382427026 --recursive   # site bucket is not force_destroy
+# The Cognito user pool has deletion protection. Temporarily set
+# deletion_protection = "INACTIVE" in infra/modules/auth/main.tf and apply it first
+# (avoid `aws cognito-idp update-user-pool`, which resets unspecified settings).
+terraform apply        # applies only the deletion-protection change
 terraform destroy      # prompts for the three required variables (or use TF_VAR_*)
 
 # Then the bootstrap stack. Empty the state bucket first (all object versions):
@@ -149,3 +151,8 @@ cd ../../bootstrap && terraform destroy
 If the bucket also holds delete markers, remove them the same way
 (`DeleteMarkers[]`). The site bucket is not `force_destroy`, which is why the block
 above empties it before the prod destroy.
+
+## Known behaviour
+
+Renaming a source does not rename it on already-crawled posts; those posts keep
+the old name until they expire (within 90 days).
