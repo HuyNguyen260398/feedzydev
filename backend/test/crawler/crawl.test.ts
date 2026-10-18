@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { crawlAll, crawlSource, OG_FETCH_BUDGET, type CrawlDeps } from '../../src/crawler/crawl';
+import { crawlAll, OG_FETCH_BUDGET, type CrawlDeps } from '../../src/crawler/crawl';
 import { mapWithConcurrency } from '../../src/lib/pool';
 import { FetchError, type FetchText } from '../../src/lib/http';
 import { postIdFor } from '../../src/lib/url';
@@ -132,21 +132,24 @@ describe('crawl', () => {
     expect(p?.thumbnailUrl).toBe('https://img.io/og.png');
   });
 
-  it('og budget caps page fetches at 30', async () => {
+  it('og budget caps page fetches at 30 across one crawl run', async () => {
     expect(OG_FETCH_BUDGET).toBe(30);
-    const items = Array.from(
-      { length: 31 },
-      (_, i) =>
-        `<item><title>t${i}</title><link>https://p.io/${i}</link><pubDate>Fri, 16 Oct 2026 10:00:00 GMT</pubDate></item>`,
-    ).join('');
-    const feed = `<?xml version="1.0"?><rss version="2.0"><channel><title>x</title>${items}</channel></rss>`;
-    const { deps, fetched } = setup([mkSource('a')], async (url) =>
-      url === 'https://a.io/feed'
-        ? { status: 200, body: feed }
-        : { status: 200, body: '<html></html>' },
-    );
-    const res = await crawlSource(mkSource('a'), deps, { og: OG_FETCH_BUDGET });
-    expect(res.newCount).toBe(31);
+    // 7 sources × 5 posts (the per-source cap) = 35 posts wanting an og:image.
+    const sources = Array.from({ length: 7 }, (_, i) => mkSource(`s${i}`));
+    const feedFor = (id: string) => {
+      const items = Array.from(
+        { length: 8 },
+        (_, i) =>
+          `<item><title>t${i}</title><link>https://p.io/${id}/${i}</link><pubDate>Fri, 16 Oct 2026 10:00:0${i} GMT</pubDate></item>`,
+      ).join('');
+      return `<?xml version="1.0"?><rss version="2.0"><channel><title>x</title>${items}</channel></rss>`;
+    };
+    const { deps, fetched } = setup(sources, async (url) => {
+      const m = /^https:\/\/(s\d)\.io\/feed$/.exec(url);
+      return m ? { status: 200, body: feedFor(m[1]) } : { status: 200, body: '<html></html>' };
+    });
+    const res = await crawlAll(deps, {});
+    expect(res.map((r) => r.newCount)).toEqual(Array(7).fill(5));
     expect(fetched.filter((u) => u.startsWith('https://p.io/'))).toHaveLength(30);
   });
 

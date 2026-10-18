@@ -1,4 +1,4 @@
-import { toPosts, RETENTION_DAYS } from '../../src/crawler/entries';
+import { toPosts, MAX_POSTS_PER_SOURCE, RETENTION_DAYS } from '../../src/crawler/entries';
 import type { FeedEntry, Source } from '../../src/lib/types';
 
 const now = new Date('2026-10-17T00:00:00Z');
@@ -47,6 +47,21 @@ describe('toPosts', () => {
     );
     expect(out).toHaveLength(1);
     expect(out[0].publishedAt).toBe('2026-10-17T00:00:00.000Z');
+  });
+
+  it('keeps only the newest MAX_POSTS_PER_SOURCE, newest first', () => {
+    const entries = Array.from({ length: 8 }, (_, i) =>
+      e(`https://a.io/${i}`, `2026-10-${String(9 + ((i * 3) % 8)).padStart(2, '0')}T00:00:00Z`),
+    );
+    const out = toPosts(entries, source, now);
+    expect(MAX_POSTS_PER_SOURCE).toBe(5);
+    expect(out.map((p) => p.publishedAt.slice(0, 10))).toEqual([
+      '2026-10-16',
+      '2026-10-15',
+      '2026-10-14',
+      '2026-10-13',
+      '2026-10-12',
+    ]);
   });
 
   it('dedupes tracking variants', () => {

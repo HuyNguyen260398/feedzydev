@@ -3,8 +3,10 @@ import type { FeedEntry, Post, Source } from '../lib/types';
 
 export const MAX_AGE_DAYS = 14;
 export const RETENTION_DAYS = 90;
+export const MAX_POSTS_PER_SOURCE = 5;
 const DAY_MS = 86_400_000;
 
+/** The newest MAX_POSTS_PER_SOURCE valid entries, newest first. */
 export function toPosts(entries: FeedEntry[], source: Source, now: Date): Post[] {
   const nowMs = now.getTime();
   const seen = new Set<string>();
@@ -38,5 +40,7 @@ export function toPosts(entries: FeedEntry[], source: Source, now: Date): Post[]
       expiresAt: Math.floor(publishedMs / 1000) + RETENTION_DAYS * 86400,
     });
   }
-  return out;
+  return out
+    .sort((a, b) => b.publishedAt.localeCompare(a.publishedAt))
+    .slice(0, MAX_POSTS_PER_SOURCE);
 }
