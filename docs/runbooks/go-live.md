@@ -4,10 +4,10 @@ First deployment of https://feedzydev-claude.nghuy.link into AWS account `010382
 
 **How to use this:** work top to bottom. Each step says **who** runs it, the command, and what "done" looks like. Don't start a step until the previous checkpoint passes. Commands are written to run from the repo root (`/Users/huyng/ws/feedzydev-claude`); in Claude Code, prefix with `!` so the output lands in the conversation.
 
-| Who | Meaning |
-|---|---|
-| **Owner** | You — needs your browser login, a secret, or an action Claude Code's safety rules reserve for you |
-| **Claude** | Read-only checks or local work Claude can run |
+| Who        | Meaning                                                                                           |
+| ---------- | ------------------------------------------------------------------------------------------------- |
+| **Owner**  | You — needs your browser login, a secret, or an action Claude Code's safety rules reserve for you |
+| **Claude** | Read-only checks or local work Claude can run                                                     |
 
 Estimated time: ~45 min, mostly waiting on CloudFront and ACM.
 
@@ -113,14 +113,14 @@ gh run watch -R HuyNguyen260398/feedzydev --exit-status
 
 **If it fails — Claude triages from the log** (`gh run view --log-failed -R HuyNguyen260398/feedzydev`):
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| `Not authorized to perform sts:AssumeRoleWithWebIdentity` | Trust `sub` mismatch or secret typo | Re-check step 3 ARNs; confirm push was to `feedzydev-claude` |
-| `AccessDenied ... iam:CreateRole` / `PutRolePolicy` | Role missing permissions boundary, or name not `feedzydev-claude-prod-*` | Code fix in `infra/modules/*`, commit, push |
-| `AccessDenied` on another service | Deploy policy gap | Widen `infra/bootstrap/main.tf` deploy policy, re-run step 1 apply, re-run workflow |
-| Cognito `InvalidParameterException` on Google IdP | Wrong Google client ID/secret | Fix secrets (step 3), `gh run rerun --failed` |
-| `Domain already exists` (Cognito) | Prefix taken | Change `cognito_domain_prefix`, update Google redirect URI (step 2) |
-| Smoke test `curl` fails but apply succeeded | DNS/CloudFront still propagating | Wait 5 min, `gh run rerun --failed` |
+| Symptom                                                   | Likely cause                                                             | Fix                                                                                 |
+| --------------------------------------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| `Not authorized to perform sts:AssumeRoleWithWebIdentity` | Trust `sub` mismatch or secret typo                                      | Re-check step 3 ARNs; confirm push was to `feedzydev-claude`                        |
+| `AccessDenied ... iam:CreateRole` / `PutRolePolicy`       | Role missing permissions boundary, or name not `feedzydev-claude-prod-*` | Code fix in `infra/modules/*`, commit, push                                         |
+| `AccessDenied` on another service                         | Deploy policy gap                                                        | Widen `infra/bootstrap/main.tf` deploy policy, re-run step 1 apply, re-run workflow |
+| Cognito `InvalidParameterException` on Google IdP         | Wrong Google client ID/secret                                            | Fix secrets (step 3), `gh run rerun --failed`                                       |
+| `Domain already exists` (Cognito)                         | Prefix taken                                                             | Change `cognito_domain_prefix`, update Google redirect URI (step 2)                 |
+| Smoke test `curl` fails but apply succeeded               | DNS/CloudFront still propagating                                         | Wait 5 min, `gh run rerun --failed`                                                 |
 
 A failed apply is safe to re-run — Terraform resumes from state.
 
@@ -194,10 +194,10 @@ aws logs tail /aws/lambda/feedzydev-claude-prod-api     --since 30m --region ap-
 
 ## Rollback
 
-| Situation | Action |
-|---|---|
-| Bad app deploy (UI/API bug) | `git revert <sha>` on `feedzydev-claude`, push → redeploys previous code |
-| Need the site offline fast | `aws cloudfront get-distribution-config` → set `Enabled=false` via `update-distribution` (or disable in console) |
-| Remove everything | Follow README → **Tear down** (empties site bucket, disables Cognito deletion protection, destroys prod, then bootstrap) |
+| Situation                   | Action                                                                                                                   |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Bad app deploy (UI/API bug) | `git revert <sha>` on `feedzydev-claude`, push → redeploys previous code                                                 |
+| Need the site offline fast  | `aws cloudfront get-distribution-config` → set `Enabled=false` via `update-distribution` (or disable in console)         |
+| Remove everything           | Follow README → **Tear down** (empties site bucket, disables Cognito deletion protection, destroys prod, then bootstrap) |
 
 Nothing here touches the other build (`feedzydev.nghuy.link`, `/Users/huyng/ws/feedzydev`) — all resources are prefixed `feedzydev-claude`.
