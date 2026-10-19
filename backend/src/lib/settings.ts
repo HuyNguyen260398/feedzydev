@@ -3,8 +3,11 @@ import type { Settings } from './types';
 export const CRAWL_TIMEZONE = 'Asia/Ho_Chi_Minh';
 export const MIN_POSTS_PER_SOURCE = 1;
 export const MAX_POSTS_PER_SOURCE = 50;
+/** 0 keeps posts forever. */
+export const KEEP_FOREVER = 0;
+export const MAX_RETENTION_DAYS = 365;
 
-export const DEFAULT_SETTINGS: Settings = { postsPerSource: 5, crawlHours: [7] };
+export const DEFAULT_SETTINGS: Settings = { postsPerSource: 5, crawlHours: [7], retentionDays: 90 };
 
 const hourFormat = new Intl.DateTimeFormat('en-US', {
   timeZone: CRAWL_TIMEZONE,
@@ -27,4 +30,10 @@ export function isValidPostsPerSource(n: unknown): n is number {
 
 export function isValidHour(n: unknown): n is number {
   return Number.isInteger(n) && (n as number) >= 0 && (n as number) <= 23;
+}
+
+export function isValidRetentionDays(n: unknown): n is number {
+  return (
+    Number.isInteger(n) && (n as number) >= KEEP_FOREVER && (n as number) <= MAX_RETENTION_DAYS
+  );
 }

@@ -5,13 +5,13 @@ import { mapWithConcurrency } from '../lib/pool';
 import type { PostsRepo } from '../lib/repo/posts';
 import type { SettingsRepo } from '../lib/repo/settings';
 import type { SourcesRepo } from '../lib/repo/sources';
-import { DEFAULT_SETTINGS, localHour } from '../lib/settings';
+import { DEFAULT_SETTINGS, KEEP_FOREVER, localHour } from '../lib/settings';
 import type { Settings, Source } from '../lib/types';
-import { toPosts } from './entries';
+import { MAX_AGE_DAYS, toPosts } from './entries';
 
 export interface CrawlDeps {
   sources: Pick<SourcesRepo, 'list' | 'get' | 'recordCrawl'>;
-  posts: Pick<PostsRepo, 'exists' | 'putIfAbsent'>;
+  posts: Pick<PostsRepo, 'exists' | 'putIfAbsent' | 'deleteOlderThan'>;
   settings: Pick<SettingsRepo, 'get'>;
   fetchText: FetchText;
   now: () => Date;
@@ -26,6 +26,14 @@ export interface SourceResult {
 
 export const OG_FETCH_BUDGET = 30;
 export const SOURCE_CONCURRENCY = 5;
+const DAY_MS = 86_400_000;
+
+/** Posts older than this would be purged straight away, so the crawler does not import them. */
+function maxAgeDays(settings: Settings): number {
+  return settings.retentionDays === KEEP_FOREVER
+    ? MAX_AGE_DAYS
+    : Math.min(MAX_AGE_DAYS, settings.retentionDays);
+}
 
 function describeError(err: unknown): string {
   if (err instanceof FetchError) return `${err.code}: ${err.message}`;
@@ -38,6 +46,7 @@ async function crawlInner(
   budget: { og: number },
   now: Date,
   limit: number,
+  maxAge: number,
 ): Promise<number> {
   const res = await deps.fetchText(source.feedUrl, { timeoutMs: 10000 });
   if (res.status < 200 || res.status >= 300) throw new Error(`HTTP ${res.status}`);
@@ -45,7 +54,7 @@ async function crawlInner(
   if (!feed) throw new Error('Not a valid feed');
 
   let newCount = 0;
-  for (const post of toPosts(feed.entries, source, now, limit)) {
+  for (const post of toPosts(feed.entries, source, now, limit, maxAge)) {
     if (await deps.posts.exists(post.postId)) continue;
     if (!post.thumbnailUrl && budget.og > 0) {
       budget.og--;
@@ -74,7 +83,7 @@ export async function crawlSource(
   const limit = source.postsPerSource ?? settings.postsPerSource;
   let result: SourceResult;
   try {
-    const newCount = await crawlInner(source, deps, budget, now, limit);
+    const newCount = await crawlInner(source, deps, budget, now, limit, maxAgeDays(settings));
     result = { sourceId: source.sourceId, status: 'ok', newCount };
   } catch (err) {
     result = {
@@ -107,7 +116,24 @@ async function loadSettings(deps: CrawlDeps): Promise<Settings> {
   }
 }
 
+/** Deletes posts published before the retention window. Returns the number deleted. */
+export async function purgeExpired(deps: CrawlDeps, settings: Settings): Promise<number> {
+  if (settings.retentionDays === KEEP_FOREVER) return 0;
+  const cutoff = new Date(deps.now().getTime() - settings.retentionDays * DAY_MS).toISOString();
+  try {
+    const deleted = await deps.posts.deleteOlderThan(cutoff);
+    if (deleted > 0) console.log(JSON.stringify({ msg: 'crawl.purged', deleted, cutoff }));
+    return deleted;
+  } catch (err) {
+    // Retention is retried on the next hourly tick; never let it block crawling.
+    console.error(`purge failed: ${describeError(err)}`);
+    return 0;
+  }
+}
+
 /**
+ * Full runs (scheduled or manual) first purge posts past the retention window; scheduled ticks
+ * purge even when they skip crawling, so retention holds with auto-crawl off.
  * `scheduled` runs come from the hourly ticker and only crawl during a configured hour;
  * manual and per-source runs always crawl. Returns null when a scheduled run is skipped.
  */
@@ -116,6 +142,7 @@ export async function crawlAll(
   opts: { sourceId?: string; scheduled?: boolean },
 ): Promise<SourceResult[] | null> {
   const settings = await loadSettings(deps);
+  if (!opts.sourceId) await purgeExpired(deps, settings);
   if (opts.scheduled && !settings.crawlHours.includes(localHour(deps.now()))) return null;
   const budget = { og: OG_FETCH_BUDGET };
   if (opts.sourceId) {

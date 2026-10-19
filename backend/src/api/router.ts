@@ -9,10 +9,13 @@ import type { SourcesRepo } from '../lib/repo/sources';
 import {
   CRAWL_TIMEZONE,
   MAX_POSTS_PER_SOURCE,
+  MAX_RETENTION_DAYS,
   MIN_POSTS_PER_SOURCE,
   isValidHour,
   isValidPostsPerSource,
+  isValidRetentionDays,
 } from '../lib/settings';
+import { MAX_SEARCH_LENGTH, searchTerms } from '../lib/search';
 import type { PublicPost } from '../lib/types';
 import { assertHttpUrl } from '../lib/url';
 import { getOwnerEmail } from './auth';
@@ -65,11 +68,16 @@ function parseSince(raw: string | undefined): string | undefined {
 async function listPosts(event: APIGatewayProxyEvent, deps: ApiDeps) {
   const q = event.queryStringParameters ?? {};
   const since = parseSince(q.since);
+  if (q.q !== undefined && q.q.length > MAX_SEARCH_LENGTH) {
+    throw new AppError(400, 'INVALID_INPUT', `q must be at most ${MAX_SEARCH_LENGTH} characters.`);
+  }
+  const search = searchTerms(q.q);
   const page = await deps.posts.listPage({
     limit: parseLimit(q.limit),
     ...(q.cursor ? { cursor: q.cursor } : {}),
     ...(q.sourceId ? { sourceId: q.sourceId } : {}),
     ...(since ? { since } : {}),
+    ...(search.length ? { search } : {}),
   });
   const items: PublicPost[] = page.items.map((p) => ({
     postId: p.postId,
@@ -185,8 +193,19 @@ async function putSettings(event: APIGatewayProxyEvent, deps: ApiDeps) {
   if (!Array.isArray(body.crawlHours) || !body.crawlHours.every(isValidHour)) {
     throw new AppError(400, 'INVALID_INPUT', 'crawlHours must be a list of hours from 0 to 23.');
   }
+  if (!isValidRetentionDays(body.retentionDays)) {
+    throw new AppError(
+      400,
+      'INVALID_INPUT',
+      `retentionDays must be an integer from 0 (keep forever) to ${MAX_RETENTION_DAYS}.`,
+    );
+  }
   const crawlHours = [...new Set(body.crawlHours as number[])].sort((a, b) => a - b);
-  const saved = await deps.settings.put({ postsPerSource: body.postsPerSource, crawlHours });
+  const saved = await deps.settings.put({
+    postsPerSource: body.postsPerSource,
+    crawlHours,
+    retentionDays: body.retentionDays,
+  });
   return json(200, { ...saved, timezone: CRAWL_TIMEZONE });
 }
 

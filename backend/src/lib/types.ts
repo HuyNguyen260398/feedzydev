@@ -30,6 +30,8 @@ export interface Settings {
   postsPerSource: number;
   /** Local hours (0–23, CRAWL_TIMEZONE) at which the scheduled crawl runs; empty = off. */
   crawlHours: number[];
+  /** Posts published more than this many days ago are deleted; 0 = keep forever. */
+  retentionDays: number;
   updatedAt?: string;
 }
 export interface Post {
@@ -43,7 +45,8 @@ export interface Post {
   sourceName: string;
   feedKey: 'ALL';
   crawledAt: string;
-  expiresAt: number;
+  /** Legacy DynamoDB TTL; retention is now enforced by the crawler's purge. */
+  expiresAt?: number;
 }
 export type PublicPost = Omit<Post, 'feedKey' | 'expiresAt' | 'crawledAt'>;
 export interface FeedCandidate {

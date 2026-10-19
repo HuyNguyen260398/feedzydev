@@ -24,11 +24,12 @@ function setup(
   fetchImpl: (url: string) => Promise<{ status: number; body: string }>,
   existing: string[] = [],
   putResult: (p: Post) => boolean = () => true,
-  settings: Settings = { postsPerSource: 50, crawlHours: [7] },
+  settings: Settings = { postsPerSource: 50, crawlHours: [7], retentionDays: 90 },
 ) {
   const saved: Post[] = [];
   const recorded: { id: string; r: Record<string, unknown> }[] = [];
   const fetched: string[] = [];
+  const purgedBefore: string[] = [];
   const fetchText: FetchText = async (url) => {
     fetched.push(url);
     const r = await fetchImpl(url);
@@ -49,12 +50,16 @@ function setup(
         if (ok) saved.push(p);
         return ok;
       },
+      deleteOlderThan: async (cutoff) => {
+        purgedBefore.push(cutoff);
+        return 0;
+      },
     },
     settings: { get: async () => settings },
     fetchText,
     now: () => NOW,
   };
-  return { deps, saved, recorded, fetched };
+  return { deps, saved, recorded, fetched, purgedBefore };
 }
 
 const rssOk = async () => ({ status: 200, body: feedXml });
@@ -162,7 +167,7 @@ describe('crawl', () => {
       },
       [],
       undefined,
-      { postsPerSource: 5, crawlHours: [7] },
+      { postsPerSource: 5, crawlHours: [7], retentionDays: 90 },
     );
     const res = await crawlAllOk(deps, {});
     expect(res.map((r) => r.newCount)).toEqual(Array(7).fill(5));
@@ -200,6 +205,7 @@ describe('crawl', () => {
       const s = setup([mkSource('a')], many(3), [], undefined, {
         postsPerSource: 5,
         crawlHours: [8, 13],
+        retentionDays: 90,
       });
       expect(await crawlAll(s.deps, { scheduled: true })).toBeNull();
       expect(s.fetched).toEqual([]);
@@ -209,6 +215,7 @@ describe('crawl', () => {
       const s = setup([mkSource('a')], many(3), [], undefined, {
         postsPerSource: 5,
         crawlHours: [7, 13],
+        retentionDays: 90,
       });
       expect((await crawlAllOk(s.deps, { scheduled: true }))[0].newCount).toBe(3);
     });
@@ -217,6 +224,7 @@ describe('crawl', () => {
       const s = setup([mkSource('a')], many(3), [], undefined, {
         postsPerSource: 5,
         crawlHours: [],
+        retentionDays: 90,
       });
       expect((await crawlAllOk(s.deps, {}))[0].newCount).toBe(3);
     });
@@ -227,7 +235,7 @@ describe('crawl', () => {
         many(10),
         [],
         undefined,
-        { postsPerSource: 4, crawlHours: [7] },
+        { postsPerSource: 4, crawlHours: [7], retentionDays: 90 },
       );
       expect((await crawlAllOk(s.deps, {})).map((r) => r.newCount)).toEqual([4, 2]);
     });
@@ -242,6 +250,61 @@ describe('crawl', () => {
       const err = jest.spyOn(console, 'error').mockImplementation(() => {});
       expect((await crawlAllOk(s.deps, {}))[0].newCount).toBe(DEFAULT_SETTINGS.postsPerSource);
       expect(err).toHaveBeenCalled();
+      err.mockRestore();
+    });
+  });
+
+  describe('retention', () => {
+    const recent = (days: number) => {
+      // NOW is 2026-10-17T00:00Z; one post 1 day old, one `days` old.
+      const at = (d: number) => new Date(NOW.getTime() - d * 86_400_000).toUTCString();
+      const body = `<?xml version="1.0"?><rss version="2.0"><channel><title>x</title><item><title>new</title><link>https://p.io/new</link><pubDate>${at(1)}</pubDate><enclosure url="https://img.io/n.png" type="image/png"/></item><item><title>old</title><link>https://p.io/old</link><pubDate>${at(days)}</pubDate><enclosure url="https://img.io/o.png" type="image/png"/></item></channel></rss>`;
+      return async () => ({ status: 200, body });
+    };
+    const settings = (retentionDays: number, crawlHours = [7]) => ({
+      postsPerSource: 5,
+      crawlHours,
+      retentionDays,
+    });
+
+    it('full runs purge posts published before the retention window', async () => {
+      const s = setup([mkSource('a')], rssOk, [], undefined, settings(30));
+      await crawlAllOk(s.deps, {});
+      expect(s.purgedBefore).toEqual(['2026-09-17T00:00:00.000Z']);
+    });
+
+    it('scheduled ticks purge even when they skip crawling', async () => {
+      const s = setup([mkSource('a')], rssOk, [], undefined, settings(30, []));
+      expect(await crawlAll(s.deps, { scheduled: true })).toBeNull();
+      expect(s.purgedBefore).toHaveLength(1);
+    });
+
+    it('per-source runs and keep-forever do not purge', async () => {
+      const one = setup([mkSource('a')], rssOk, [], undefined, settings(30));
+      await crawlAllOk(one.deps, { sourceId: 'a' });
+      expect(one.purgedBefore).toEqual([]);
+      const forever = setup([mkSource('a')], rssOk, [], undefined, settings(0));
+      await crawlAllOk(forever.deps, {});
+      expect(forever.purgedBefore).toEqual([]);
+    });
+
+    it('does not import posts older than a short retention window', async () => {
+      const s = setup([mkSource('a')], recent(5), [], undefined, settings(3));
+      await crawlAllOk(s.deps, {});
+      expect(s.saved.map((p) => p.title)).toEqual(['new']);
+      const forever = setup([mkSource('a')], recent(5), [], undefined, settings(0));
+      await crawlAllOk(forever.deps, {});
+      expect(forever.saved.map((p) => p.title)).toEqual(['new', 'old']);
+    });
+
+    it('a failed purge is logged and crawling continues', async () => {
+      const s = setup([mkSource('a')], rssOk, [], undefined, settings(30));
+      s.deps.posts.deleteOlderThan = async () => {
+        throw new Error('ddb down');
+      };
+      const err = jest.spyOn(console, 'error').mockImplementation(() => {});
+      expect((await crawlAllOk(s.deps, {}))[0].status).toBe('ok');
+      expect(err).toHaveBeenCalledWith(expect.stringContaining('purge failed'));
       err.mockRestore();
     });
   });

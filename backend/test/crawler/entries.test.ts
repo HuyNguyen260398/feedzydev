@@ -1,4 +1,4 @@
-import { toPosts, RETENTION_DAYS } from '../../src/crawler/entries';
+import { toPosts } from '../../src/crawler/entries';
 import type { FeedEntry, Source } from '../../src/lib/types';
 
 const now = new Date('2026-10-17T00:00:00Z');
@@ -15,10 +15,9 @@ const e = (url: string | undefined, publishedAt?: string): FeedEntry =>
   ({ url, title: 't', publishedAt }) as FeedEntry;
 
 describe('toPosts', () => {
-  it('keeps recent, sets expiresAt', () => {
+  it('keeps recent, without a TTL (retention is purged by the crawler)', () => {
     const [p] = toPosts([e('https://a.io/1', '2026-10-16T00:00:00Z')], source, now, LIMIT);
-    expect(RETENTION_DAYS).toBe(90);
-    expect(p.expiresAt).toBe(Date.parse('2026-10-16T00:00:00Z') / 1000 + 7776000);
+    expect(p).not.toHaveProperty('expiresAt');
     expect(p.feedKey).toBe('ALL');
     expect(p.sourceName).toBe('Src');
     expect(p.sourceId).toBe('s1');
@@ -31,6 +30,17 @@ describe('toPosts', () => {
       source,
       now,
       LIMIT,
+    );
+    expect(out.map((p) => p.url)).toEqual(['https://a.io/1']);
+  });
+
+  it('honours a shorter age window', () => {
+    const out = toPosts(
+      [e('https://a.io/1', '2026-10-15T00:00:00Z'), e('https://a.io/2', '2026-10-13T00:00:00Z')],
+      source,
+      now,
+      LIMIT,
+      3,
     );
     expect(out.map((p) => p.url)).toEqual(['https://a.io/1']);
   });

@@ -17,6 +17,7 @@ export class SettingsRepo {
     return {
       postsPerSource: item.postsPerSource ?? DEFAULT_SETTINGS.postsPerSource,
       crawlHours: item.crawlHours ?? DEFAULT_SETTINGS.crawlHours,
+      retentionDays: item.retentionDays ?? DEFAULT_SETTINGS.retentionDays,
       ...(item.updatedAt ? { updatedAt: item.updatedAt } : {}),
     };
   }

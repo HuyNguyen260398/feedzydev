@@ -69,11 +69,13 @@ function mk() {
     }),
   };
   const settings = {
-    get: jest.fn(async () => ({ postsPerSource: 5, crawlHours: [7] })),
-    put: jest.fn(async (v: { postsPerSource: number; crawlHours: number[] }) => ({
-      ...v,
-      updatedAt: '2026-10-18T00:00:00.000Z',
-    })),
+    get: jest.fn(async () => ({ postsPerSource: 5, crawlHours: [7], retentionDays: 90 })),
+    put: jest.fn(
+      async (v: { postsPerSource: number; crawlHours: number[]; retentionDays: number }) => ({
+        ...v,
+        updatedAt: '2026-10-18T00:00:00.000Z',
+      }),
+    ),
   };
   const deps = {
     sources,
@@ -134,6 +136,19 @@ describe('public routes', () => {
     const r = await route(ev('GET', '/posts', { query: { since: 'yesterday' } }), m.deps);
     expect(r.statusCode).toBe(400);
     expect(parse(r).error.code).toBe('INVALID_INPUT');
+  });
+
+  test('q is split into lower-cased search terms; blank is ignored; too long gives 400', async () => {
+    const m = mk();
+    await route(ev('GET', '/posts', { query: { q: '  Kubernetes   UPGRADES ' } }), m.deps);
+    expect(m.posts.listPage).toHaveBeenLastCalledWith({
+      limit: 30,
+      search: ['kubernetes', 'upgrades'],
+    });
+    await route(ev('GET', '/posts', { query: { q: '   ' } }), m.deps);
+    expect(m.posts.listPage).toHaveBeenLastCalledWith({ limit: 30 });
+    const r = await route(ev('GET', '/posts', { query: { q: 'x'.repeat(101) } }), m.deps);
+    expect(r.statusCode).toBe(400);
   });
 
   test('bad cursor gives 400 INVALID_CURSOR', async () => {
@@ -424,6 +439,7 @@ describe('admin routes', () => {
     expect(parse(r)).toEqual({
       postsPerSource: 5,
       crawlHours: [7],
+      retentionDays: 90,
       timezone: 'Asia/Ho_Chi_Minh',
     });
   });
@@ -432,16 +448,26 @@ describe('admin routes', () => {
     const m = mk();
     const put = (body: string) =>
       route(ev('PUT', '/admin/settings', { claims: owner, body }), m.deps);
-    const r = await put('{"postsPerSource":10,"crawlHours":[13,8,13]}');
+    const r = await put('{"postsPerSource":10,"crawlHours":[13,8,13],"retentionDays":30}');
     expect(r.statusCode).toBe(200);
-    expect(m.settings.put).toHaveBeenCalledWith({ postsPerSource: 10, crawlHours: [8, 13] });
+    expect(m.settings.put).toHaveBeenCalledWith({
+      postsPerSource: 10,
+      crawlHours: [8, 13],
+      retentionDays: 30,
+    });
     expect(parse(r).timezone).toBe('Asia/Ho_Chi_Minh');
-    expect((await put('{"postsPerSource":10,"crawlHours":[]}')).statusCode).toBe(200);
+    expect((await put('{"postsPerSource":10,"crawlHours":[],"retentionDays":0}')).statusCode).toBe(
+      200,
+    );
     for (const bad of [
-      '{"postsPerSource":0,"crawlHours":[8]}',
-      '{"postsPerSource":10,"crawlHours":[24]}',
-      '{"postsPerSource":10,"crawlHours":"8"}',
-      '{"postsPerSource":10}',
+      '{"postsPerSource":0,"crawlHours":[8],"retentionDays":30}',
+      '{"postsPerSource":10,"crawlHours":[24],"retentionDays":30}',
+      '{"postsPerSource":10,"crawlHours":"8","retentionDays":30}',
+      '{"postsPerSource":10,"retentionDays":30}',
+      '{"postsPerSource":10,"crawlHours":[8]}',
+      '{"postsPerSource":10,"crawlHours":[8],"retentionDays":-1}',
+      '{"postsPerSource":10,"crawlHours":[8],"retentionDays":366}',
+      '{"postsPerSource":10,"crawlHours":[8],"retentionDays":1.5}',
     ]) {
       expect((await put(bad)).statusCode).toBe(400);
     }

@@ -52,6 +52,11 @@ data "aws_iam_policy_document" "crawler" {
     actions   = ["dynamodb:GetItem", "dynamodb:PutItem"]
     resources = [local.posts_table]
   }
+  # Retention purge: find expired posts on byPublished, then batch-delete them.
+  statement {
+    actions   = ["dynamodb:Query", "dynamodb:BatchWriteItem"]
+    resources = [local.posts_table, "${local.posts_table}/index/byPublished"]
+  }
   statement {
     actions   = ["dynamodb:GetItem"]
     resources = [local.settings_tbl]
