@@ -29,6 +29,16 @@ export interface AdminSource {
   lastStatus?: 'ok' | 'error';
   lastError?: string;
   lastNewCount?: number;
+  postsPerSource?: number;
+}
+
+export interface CrawlSettings {
+  postsPerSource: number;
+  crawlHours: number[];
+  /** Days to keep posts after publication; 0 = forever. */
+  retentionDays: number;
+  timezone: string;
+  updatedAt?: string;
 }
 
 export interface FeedCandidate {

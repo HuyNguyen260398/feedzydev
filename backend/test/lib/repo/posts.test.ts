@@ -8,7 +8,7 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { decodeCursor } from '../../../src/lib/cursor';
-import { PostsRepo } from '../../../src/lib/repo/posts';
+import { PostsRepo, SEARCH_SCAN_LIMIT } from '../../../src/lib/repo/posts';
 import type { Post } from '../../../src/lib/types';
 
 const ddb = mockClient(DynamoDBDocumentClient);
@@ -23,7 +23,6 @@ const post: Post = {
   sourceName: 'S',
   feedKey: 'ALL',
   crawledAt: '2026-01-02T00:00:00.000Z',
-  expiresAt: 1,
 };
 
 beforeEach(() => ddb.reset());
@@ -99,6 +98,91 @@ describe('PostsRepo', () => {
     });
     expect(bySource.KeyConditionExpression).toBe('sourceId = :s AND publishedAt >= :since');
     expect(bySource.ExpressionAttributeValues?.[':s']).toBe('s1');
+  });
+
+  describe('listPage search', () => {
+    const mk = (i: number, title: string, sourceName = 'Blog'): Post => ({
+      ...post,
+      postId: `p${i}`,
+      title,
+      sourceName,
+      publishedAt: `2026-01-${String(30 - i).padStart(2, '0')}T00:00:00.000Z`,
+    });
+
+    it('filters titles and source names case-insensitively across query pages', async () => {
+      ddb
+        .on(QueryCommand)
+        .resolvesOnce({
+          Items: [mk(1, 'Kubernetes 1.36'), mk(2, 'Terraform'), mk(3, 'Misc', 'K8s KUBERNETES')],
+          LastEvaluatedKey: { k: 1 },
+        })
+        .resolvesOnce({ Items: [mk(4, 'kubernetes again')] });
+      const page = await repo.listPage({ limit: 10, search: ['kubernetes'] });
+      expect(page.items.map((p) => p.postId)).toEqual(['p1', 'p3', 'p4']);
+      expect(page.nextCursor).toBeUndefined();
+      const inputs = ddb.commandCalls(QueryCommand).map((c) => c.args[0].input);
+      expect(inputs[0].Limit).toBe(200);
+      expect(inputs[1].ExclusiveStartKey).toEqual({ k: 1 });
+    });
+
+    it('requires every term to match', async () => {
+      ddb.on(QueryCommand).resolves({
+        Items: [mk(1, 'Kubernetes upgrades'), mk(2, 'Kubernetes', 'Upgrades Weekly'), mk(3, 'x')],
+      });
+      const page = await repo.listPage({ limit: 10, search: ['kubernetes', 'upgrades'] });
+      expect(page.items.map((p) => p.postId)).toEqual(['p1', 'p2']);
+    });
+
+    it('stops at limit mid-page with a cursor at the last returned post', async () => {
+      ddb.on(QueryCommand).resolves({ Items: [mk(1, 'a'), mk(2, 'a'), mk(3, 'a')] });
+      const page = await repo.listPage({ limit: 2, search: ['a'] });
+      expect(page.items).toHaveLength(2);
+      expect(decodeCursor(page.nextCursor as string)).toEqual({
+        postId: 'p2',
+        publishedAt: '2026-01-28T00:00:00.000Z',
+        feedKey: 'ALL',
+      });
+    });
+
+    it('a by-source cursor uses the bySource key; no cursor when the last item fills the page', async () => {
+      ddb
+        .on(QueryCommand)
+        .resolvesOnce({ Items: [mk(1, 'a'), mk(2, 'b')], LastEvaluatedKey: { k: 1 } });
+      const page = await repo.listPage({ limit: 1, sourceId: 's1', search: ['a'] });
+      expect(decodeCursor(page.nextCursor as string)).toEqual({
+        postId: 'p1',
+        publishedAt: '2026-01-29T00:00:00.000Z',
+        sourceId: 's1',
+      });
+      ddb.reset();
+      ddb.on(QueryCommand).resolves({ Items: [mk(1, 'b'), mk(2, 'a')] });
+      expect((await repo.listPage({ limit: 1, search: ['a'] })).nextCursor).toBeUndefined();
+    });
+
+    it('hands back a cursor after scanning the limit without filling the page', async () => {
+      const miss = Array.from({ length: 200 }, (_, i) => mk(i, 'nope'));
+      ddb.on(QueryCommand).resolves({ Items: miss, LastEvaluatedKey: { k: 'last' } });
+      const page = await repo.listPage({ limit: 5, search: ['zzz'] });
+      expect(page.items).toEqual([]);
+      expect(decodeCursor(page.nextCursor as string)).toEqual({ k: 'last' });
+      expect(ddb.commandCalls(QueryCommand)).toHaveLength(SEARCH_SCAN_LIMIT / 200);
+    });
+  });
+
+  it('deleteOlderThan deletes posts published before the cutoff', async () => {
+    ddb.on(QueryCommand).resolves({ Items: [{ postId: 'p0' }, { postId: 'p1' }] });
+    ddb.on(BatchWriteCommand).resolves({});
+    expect(await repo.deleteOlderThan('2026-09-17T00:00:00.000Z')).toBe(2);
+    const input = ddb.commandCalls(QueryCommand)[0].args[0].input;
+    expect(input).toMatchObject({
+      IndexName: 'byPublished',
+      KeyConditionExpression: 'feedKey = :k AND publishedAt < :cutoff',
+      ExpressionAttributeValues: { ':k': 'ALL', ':cutoff': '2026-09-17T00:00:00.000Z' },
+      ProjectionExpression: 'postId',
+    });
+    expect(ddb.commandCalls(BatchWriteCommand)[0].args[0].input.RequestItems?.posts).toHaveLength(
+      2,
+    );
   });
 
   it('deleteBySource batches by 25', async () => {

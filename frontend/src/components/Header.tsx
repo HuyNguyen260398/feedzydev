@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import InstallButton from '@/components/InstallButton';
 import ThemeToggle from '@/components/ThemeToggle';
 
 const LINKS = [
@@ -17,7 +18,7 @@ function isActive(pathname: string, href: string): boolean {
 export default function Header() {
   const pathname = usePathname() ?? '/';
   return (
-    <header className="sticky top-0 z-20 border-b border-border bg-bg/85 backdrop-blur">
+    <header className="sticky top-0 z-20 border-b border-border bg-bg/85 pt-[env(safe-area-inset-top)] backdrop-blur">
       <div className="mx-auto flex h-14 max-w-5xl items-center justify-between gap-2 px-3 sm:px-4">
         <Link href="/" className="font-mono text-base font-semibold whitespace-nowrap sm:text-lg">
           {'> feedzy'}
@@ -42,6 +43,7 @@ export default function Header() {
               );
             })}
           </nav>
+          <InstallButton />
           <ThemeToggle />
         </div>
       </div>

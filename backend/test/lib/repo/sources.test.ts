@@ -87,6 +87,28 @@ describe('SourcesRepo', () => {
     expect(input.ExpressionAttributeNames).toEqual({ '#name': 'name', '#enabled': 'enabled' });
   });
 
+  it('update sets postsPerSource, or removes it on null', async () => {
+    ddb.on(UpdateCommand).resolves({ Attributes: src({}) });
+    await repo.update('id', { postsPerSource: 3 });
+    await repo.update('id', { enabled: true, postsPerSource: null });
+    const [set, clear] = ddb.commandCalls(UpdateCommand).map((c) => c.args[0].input);
+    expect(set.UpdateExpression).toBe('SET #pps = :pps');
+    expect(set.ExpressionAttributeValues).toEqual({ ':pps': 3 });
+    expect(clear.UpdateExpression).toBe('SET #enabled = :enabled REMOVE #pps');
+    expect(clear.ExpressionAttributeNames).toEqual({
+      '#enabled': 'enabled',
+      '#pps': 'postsPerSource',
+    });
+  });
+
+  it('update with only a null override omits ExpressionAttributeValues', async () => {
+    ddb.on(UpdateCommand).resolves({ Attributes: src({}) });
+    await repo.update('id', { postsPerSource: null });
+    const input = ddb.commandCalls(UpdateCommand)[0].args[0].input;
+    expect(input.UpdateExpression).toBe('REMOVE #pps');
+    expect(input.ExpressionAttributeValues).toBeUndefined();
+  });
+
   it('update on missing id → undefined', async () => {
     ddb.on(UpdateCommand).rejects(ccf());
     expect(await repo.update('nope', { name: 'x' })).toBeUndefined();

@@ -107,3 +107,45 @@ function act5s() {
     vi.advanceTimersByTime(5000);
   });
 }
+
+describe('SourceRow posts override', () => {
+  const input = () => screen.getByLabelText('Posts per crawl for Kube Weekly') as HTMLInputElement;
+
+  it('shows the global default as placeholder when there is no override', () => {
+    render(<SourceRow source={source} defaultPosts={5} onChange={vi.fn()} />);
+    expect(input()).toHaveValue(null);
+    expect(input()).toHaveAttribute('placeholder', '5');
+  });
+
+  it('saves a new override on blur', async () => {
+    const onChange = vi.fn();
+    render(<SourceRow source={source} defaultPosts={5} onChange={onChange} />);
+    fireEvent.change(input(), { target: { value: '2' } });
+    fireEvent.blur(input());
+    await waitFor(() => expect(onChange).toHaveBeenCalled());
+    expect(updateSource).toHaveBeenCalledWith('s1', { postsPerSource: 2 });
+  });
+
+  it('clearing an existing override sends null', async () => {
+    render(<SourceRow source={{ ...source, postsPerSource: 3 }} onChange={vi.fn()} />);
+    expect(input()).toHaveValue(3);
+    fireEvent.change(input(), { target: { value: '' } });
+    fireEvent.blur(input());
+    await waitFor(() => expect(updateSource).toHaveBeenCalledWith('s1', { postsPerSource: null }));
+  });
+
+  it('rejects out-of-range values without saving and restores the input', () => {
+    render(<SourceRow source={{ ...source, postsPerSource: 3 }} onChange={vi.fn()} />);
+    fireEvent.change(input(), { target: { value: '99' } });
+    fireEvent.blur(input());
+    expect(screen.getByRole('alert')).toHaveTextContent('from 1 to 50');
+    expect(input()).toHaveValue(3);
+    expect(updateSource).not.toHaveBeenCalled();
+  });
+
+  it('unchanged value does not save', () => {
+    render(<SourceRow source={source} onChange={vi.fn()} />);
+    fireEvent.blur(input());
+    expect(updateSource).not.toHaveBeenCalled();
+  });
+});

@@ -84,3 +84,20 @@ export function sinceFor(range: DateRange, now: Date): string | undefined {
   }
   return new Date(now.getTime() - Number.parseInt(range, 10) * DAY).toISOString();
 }
+
+/** 0–23 → '12 AM', '8 AM', '1 PM'. */
+export function formatHour(h: number): string {
+  return `${h % 12 || 12} ${h < 12 ? 'AM' : 'PM'}`;
+}
+
+/** 'Asia/Ho_Chi_Minh' → 'GMT+7' (falls back to the zone name). */
+export function zoneOffsetLabel(timeZone: string, at: Date = new Date()): string {
+  try {
+    const part = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'shortOffset' })
+      .formatToParts(at)
+      .find((p) => p.type === 'timeZoneName');
+    return part?.value ?? timeZone;
+  } catch {
+    return timeZone;
+  }
+}

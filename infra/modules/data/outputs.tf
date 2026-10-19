@@ -13,3 +13,11 @@ output "posts_table_name" {
 output "posts_table_arn" {
   value = aws_dynamodb_table.posts.arn
 }
+
+output "settings_table_name" {
+  value = aws_dynamodb_table.settings.name
+}
+
+output "settings_table_arn" {
+  value = aws_dynamodb_table.settings.arn
+}

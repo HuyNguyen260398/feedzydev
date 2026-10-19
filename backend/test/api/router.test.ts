@@ -68,9 +68,19 @@ function mk() {
       return 1;
     }),
   };
+  const settings = {
+    get: jest.fn(async () => ({ postsPerSource: 5, crawlHours: [7], retentionDays: 90 })),
+    put: jest.fn(
+      async (v: { postsPerSource: number; crawlHours: number[]; retentionDays: number }) => ({
+        ...v,
+        updatedAt: '2026-10-18T00:00:00.000Z',
+      }),
+    ),
+  };
   const deps = {
     sources,
     posts,
+    settings,
     fetchText: jest.fn(async (url: string) => ({
       status: 200,
       url,
@@ -84,6 +94,7 @@ function mk() {
     deps: deps as unknown as ApiDeps,
     sources,
     posts,
+    settings,
     fetchText: deps.fetchText,
     calls,
     invokeCrawl: deps.invokeCrawl,
@@ -125,6 +136,19 @@ describe('public routes', () => {
     const r = await route(ev('GET', '/posts', { query: { since: 'yesterday' } }), m.deps);
     expect(r.statusCode).toBe(400);
     expect(parse(r).error.code).toBe('INVALID_INPUT');
+  });
+
+  test('q is split into lower-cased search terms; blank is ignored; too long gives 400', async () => {
+    const m = mk();
+    await route(ev('GET', '/posts', { query: { q: '  Kubernetes   UPGRADES ' } }), m.deps);
+    expect(m.posts.listPage).toHaveBeenLastCalledWith({
+      limit: 30,
+      search: ['kubernetes', 'upgrades'],
+    });
+    await route(ev('GET', '/posts', { query: { q: '   ' } }), m.deps);
+    expect(m.posts.listPage).toHaveBeenLastCalledWith({ limit: 30 });
+    const r = await route(ev('GET', '/posts', { query: { q: 'x'.repeat(101) } }), m.deps);
+    expect(r.statusCode).toBe(400);
   });
 
   test('bad cursor gives 400 INVALID_CURSOR', async () => {
@@ -390,6 +414,64 @@ describe('admin routes', () => {
       m.deps,
     );
     expect(ok.statusCode).toBe(200);
+  });
+
+  test('PATCH postsPerSource accepts 1–50 or null, rejects others', async () => {
+    const m = mk();
+    const patch = (body: string) =>
+      route(ev('PATCH', '/admin/sources/S1', { claims: owner, body }), m.deps);
+    expect((await patch('{"postsPerSource":3}')).statusCode).toBe(200);
+    expect(m.sources.update).toHaveBeenLastCalledWith('S1', { postsPerSource: 3 });
+    expect((await patch('{"postsPerSource":null}')).statusCode).toBe(200);
+    expect(m.sources.update).toHaveBeenLastCalledWith('S1', { postsPerSource: null });
+    for (const bad of ['0', '51', '2.5', '"3"']) {
+      const r = await patch(`{"postsPerSource":${bad}}`);
+      expect(r.statusCode).toBe(400);
+      expect(parse(r).error.code).toBe('INVALID_INPUT');
+    }
+  });
+
+  test('GET /admin/settings returns settings with timezone; requires owner', async () => {
+    const m = mk();
+    expect((await route(ev('GET', '/admin/settings'), m.deps)).statusCode).toBe(401);
+    const r = await route(ev('GET', '/admin/settings', { claims: owner }), m.deps);
+    expect(r.statusCode).toBe(200);
+    expect(parse(r)).toEqual({
+      postsPerSource: 5,
+      crawlHours: [7],
+      retentionDays: 90,
+      timezone: 'Asia/Ho_Chi_Minh',
+    });
+  });
+
+  test('PUT /admin/settings validates, dedupes and sorts hours', async () => {
+    const m = mk();
+    const put = (body: string) =>
+      route(ev('PUT', '/admin/settings', { claims: owner, body }), m.deps);
+    const r = await put('{"postsPerSource":10,"crawlHours":[13,8,13],"retentionDays":30}');
+    expect(r.statusCode).toBe(200);
+    expect(m.settings.put).toHaveBeenCalledWith({
+      postsPerSource: 10,
+      crawlHours: [8, 13],
+      retentionDays: 30,
+    });
+    expect(parse(r).timezone).toBe('Asia/Ho_Chi_Minh');
+    expect((await put('{"postsPerSource":10,"crawlHours":[],"retentionDays":0}')).statusCode).toBe(
+      200,
+    );
+    for (const bad of [
+      '{"postsPerSource":0,"crawlHours":[8],"retentionDays":30}',
+      '{"postsPerSource":10,"crawlHours":[24],"retentionDays":30}',
+      '{"postsPerSource":10,"crawlHours":"8","retentionDays":30}',
+      '{"postsPerSource":10,"retentionDays":30}',
+      '{"postsPerSource":10,"crawlHours":[8]}',
+      '{"postsPerSource":10,"crawlHours":[8],"retentionDays":-1}',
+      '{"postsPerSource":10,"crawlHours":[8],"retentionDays":366}',
+      '{"postsPerSource":10,"crawlHours":[8],"retentionDays":1.5}',
+    ]) {
+      expect((await put(bad)).statusCode).toBe(400);
+    }
+    expect(m.settings.put).toHaveBeenCalledTimes(2);
   });
 
   test('DELETE removes posts before source, 204 empty body', async () => {

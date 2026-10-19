@@ -11,16 +11,18 @@ const sources: PublicSource[] = [
 function setup(props: Partial<Parameters<typeof FilterBar>[0]> = {}) {
   const onSourceChange = vi.fn();
   const onRangeChange = vi.fn();
+  const onQueryChange = vi.fn();
   render(
     <FilterBar
       sources={sources}
       range="any"
       onSourceChange={onSourceChange}
       onRangeChange={onRangeChange}
+      onQueryChange={onQueryChange}
       {...props}
     />,
   );
-  return { onSourceChange, onRangeChange };
+  return { onSourceChange, onRangeChange, onQueryChange };
 }
 
 describe('FilterBar', () => {
@@ -45,10 +47,44 @@ describe('FilterBar', () => {
     expect(screen.queryByRole('button', { name: 'Clear' })).not.toBeInTheDocument();
   });
 
-  it('Clear resets both filters', () => {
-    const { onSourceChange, onRangeChange } = setup({ sourceId: 'a', range: 'today' });
+  it('Clear resets every filter, including search', () => {
+    const { onSourceChange, onRangeChange, onQueryChange } = setup({
+      sourceId: 'a',
+      range: 'today',
+      query: 'k8s',
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
     expect(onSourceChange).toHaveBeenLastCalledWith(undefined);
     expect(onRangeChange).toHaveBeenLastCalledWith('any');
+    expect(onQueryChange).toHaveBeenLastCalledWith('');
+  });
+
+  it('a search alone shows Clear', () => {
+    setup({ query: 'k8s' });
+    expect(screen.getByRole('button', { name: 'Clear' })).toBeInTheDocument();
+  });
+
+  it('reports typed search text; the clear button and Escape empty it', () => {
+    const { onQueryChange } = setup({ query: 'kube' });
+    const box = screen.getByRole('searchbox', { name: 'Search posts' });
+    fireEvent.change(box, { target: { value: 'kubernetes' } });
+    expect(onQueryChange).toHaveBeenLastCalledWith('kubernetes');
+    fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
+    expect(onQueryChange).toHaveBeenLastCalledWith('');
+    onQueryChange.mockClear();
+    fireEvent.keyDown(box, { key: 'Escape' });
+    expect(onQueryChange).toHaveBeenLastCalledWith('');
+  });
+
+  it('"/" focuses the search box unless typing elsewhere', () => {
+    setup();
+    const box = screen.getByRole('searchbox', { name: 'Search posts' });
+    fireEvent.keyDown(document.body, { key: '/' });
+    expect(box).toHaveFocus();
+    box.blur();
+    const source = screen.getByLabelText('Source');
+    source.focus();
+    fireEvent.keyDown(source, { key: '/' });
+    expect(source).toHaveFocus();
   });
 });

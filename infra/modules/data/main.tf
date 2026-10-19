@@ -54,3 +54,19 @@ resource "aws_dynamodb_table" "posts" {
     enabled        = true
   }
 }
+
+# Single-item table (id = "global") holding crawl settings edited from the Sources page.
+resource "aws_dynamodb_table" "settings" {
+  name         = "${var.name_prefix}-settings"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "id"
+
+  attribute {
+    name = "id"
+    type = "S"
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+}

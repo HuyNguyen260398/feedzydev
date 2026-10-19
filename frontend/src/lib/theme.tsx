@@ -1,7 +1,15 @@
 'use client';
 
-import { createContext, useCallback, useContext, useMemo, useSyncExternalStore } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useSyncExternalStore,
+} from 'react';
 import type { ReactNode } from 'react';
+import { THEME_COLORS } from '@/lib/themeColors';
 
 export type Theme = 'dark' | 'light';
 export const THEME_KEY = 'fz-theme';
@@ -42,6 +50,13 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }
     listeners.forEach((fn) => fn());
   }, []);
+
+  // Tint the browser / installed-app title bar to match.
+  useEffect(() => {
+    document
+      .querySelector('meta[name="theme-color"]')
+      ?.setAttribute('content', THEME_COLORS[theme]);
+  }, [theme]);
 
   const value = useMemo(() => ({ theme, toggle }), [theme, toggle]);
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

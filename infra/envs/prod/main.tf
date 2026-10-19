@@ -8,6 +8,7 @@ locals {
   account_id    = data.aws_caller_identity.current.account_id
   sources_table = "arn:aws:dynamodb:${var.region}:${local.account_id}:table/${var.name_prefix}-sources"
   posts_table   = "arn:aws:dynamodb:${var.region}:${local.account_id}:table/${var.name_prefix}-posts"
+  settings_tbl  = "arn:aws:dynamodb:${var.region}:${local.account_id}:table/${var.name_prefix}-settings"
   crawler_name  = "${var.name_prefix}-crawler"
   crawler_arn   = "arn:aws:lambda:${var.region}:${local.account_id}:function:${local.crawler_name}"
 }
@@ -33,6 +34,10 @@ data "aws_iam_policy_document" "api" {
     ]
   }
   statement {
+    actions   = ["dynamodb:GetItem", "dynamodb:PutItem"]
+    resources = [local.settings_tbl]
+  }
+  statement {
     actions   = ["lambda:InvokeFunction"]
     resources = [local.crawler_arn]
   }
@@ -46,6 +51,15 @@ data "aws_iam_policy_document" "crawler" {
   statement {
     actions   = ["dynamodb:GetItem", "dynamodb:PutItem"]
     resources = [local.posts_table]
+  }
+  # Retention purge: find expired posts on byPublished, then batch-delete them.
+  statement {
+    actions   = ["dynamodb:Query", "dynamodb:BatchWriteItem"]
+    resources = [local.posts_table, "${local.posts_table}/index/byPublished"]
+  }
+  statement {
+    actions   = ["dynamodb:GetItem"]
+    resources = [local.settings_tbl]
   }
 }
 
@@ -82,6 +96,7 @@ module "api_lambda" {
   environment = {
     SOURCES_TABLE         = module.data.sources_table_name
     POSTS_TABLE           = module.data.posts_table_name
+    SETTINGS_TABLE        = module.data.settings_table_name
     ALLOWED_EMAIL         = var.allowed_email
     CRAWLER_FUNCTION_NAME = local.crawler_name
   }
@@ -97,8 +112,9 @@ module "crawler" {
   memory_size              = 512
   reserved_concurrency     = 1
   environment = {
-    SOURCES_TABLE = module.data.sources_table_name
-    POSTS_TABLE   = module.data.posts_table_name
+    SOURCES_TABLE  = module.data.sources_table_name
+    POSTS_TABLE    = module.data.posts_table_name
+    SETTINGS_TABLE = module.data.settings_table_name
   }
   policy_json = data.aws_iam_policy_document.crawler.json
 }

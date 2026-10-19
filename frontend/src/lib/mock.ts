@@ -1,5 +1,12 @@
 // Dev-only fixture data, loaded by api.ts when NEXT_PUBLIC_MOCK=1.
-import type { AdminSource, FeedCandidate, Page, PublicPost, PublicSource } from '@/lib/types';
+import type {
+  AdminSource,
+  CrawlSettings,
+  FeedCandidate,
+  Page,
+  PublicPost,
+  PublicSource,
+} from '@/lib/types';
 
 const SOURCES: PublicSource[] = [
   { sourceId: 'k8s', name: 'Kubernetes Blog', siteUrl: 'https://kubernetes.io/blog/' },
@@ -85,12 +92,17 @@ export async function mockPosts(p: {
   cursor?: string;
   sourceId?: string;
   since?: string;
+  q?: string;
   limit?: number;
 }): Promise<Page<PublicPost>> {
   await delay(400);
+  // Same matching as the backend: every term in the title or source name.
+  const terms = (p.q ?? '').toLowerCase().split(/\s+/).filter(Boolean);
   const all = buildPosts().filter(
     (post) =>
-      (!p.sourceId || post.sourceId === p.sourceId) && (!p.since || post.publishedAt >= p.since),
+      (!p.sourceId || post.sourceId === p.sourceId) &&
+      (!p.since || post.publishedAt >= p.since) &&
+      terms.every((t) => `${post.title}\n${post.sourceName}`.toLowerCase().includes(t)),
   );
   const start = p.cursor ? Number(p.cursor) : 0;
   const end = start + (p.limit ?? 30);
@@ -187,12 +199,15 @@ export async function mockAdd(i: { feedUrl: string; name?: string }): Promise<Ad
 
 export async function mockUpdate(
   id: string,
-  patch: { name?: string; enabled?: boolean },
+  patch: { name?: string; enabled?: boolean; postsPerSource?: number | null },
 ): Promise<AdminSource> {
   await delay(200);
   const s = admin().find((x) => x.sourceId === id);
   if (!s) throw new Error('not found');
-  Object.assign(s, patch);
+  const { postsPerSource, ...rest } = patch;
+  Object.assign(s, rest);
+  if (postsPerSource === null) delete s.postsPerSource;
+  else if (postsPerSource !== undefined) s.postsPerSource = postsPerSource;
   return { ...s };
 }
 
@@ -203,4 +218,26 @@ export async function mockDelete(id: string): Promise<void> {
 
 export async function mockCrawl(): Promise<void> {
   await delay(300);
+}
+
+let settings: CrawlSettings = {
+  postsPerSource: 5,
+  crawlHours: [7],
+  retentionDays: 90,
+  timezone: 'Asia/Ho_Chi_Minh',
+};
+
+export async function mockGetSettings(): Promise<CrawlSettings> {
+  await delay(200);
+  return { ...settings };
+}
+
+export async function mockSaveSettings(s: {
+  postsPerSource: number;
+  crawlHours: number[];
+  retentionDays: number;
+}): Promise<CrawlSettings> {
+  await delay(300);
+  settings = { ...settings, ...s, updatedAt: new Date().toISOString() };
+  return { ...settings };
 }

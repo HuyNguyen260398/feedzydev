@@ -25,6 +25,12 @@ describe('api', () => {
     );
   });
 
+  it('getPosts sends the search text as q', async () => {
+    fetchMock.mockResolvedValue(reply(200, { items: [] }));
+    await getPosts({ q: 'k8s upgrades', limit: 30 });
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/posts?q=k8s+upgrades&limit=30');
+  });
+
   it('admin calls send raw id token', async () => {
     fetchMock.mockResolvedValue(reply(200, { items: [] }));
     await listAdminSources();
