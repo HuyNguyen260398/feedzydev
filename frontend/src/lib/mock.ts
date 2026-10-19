@@ -92,12 +92,17 @@ export async function mockPosts(p: {
   cursor?: string;
   sourceId?: string;
   since?: string;
+  q?: string;
   limit?: number;
 }): Promise<Page<PublicPost>> {
   await delay(400);
+  // Same matching as the backend: every term in the title or source name.
+  const terms = (p.q ?? '').toLowerCase().split(/\s+/).filter(Boolean);
   const all = buildPosts().filter(
     (post) =>
-      (!p.sourceId || post.sourceId === p.sourceId) && (!p.since || post.publishedAt >= p.since),
+      (!p.sourceId || post.sourceId === p.sourceId) &&
+      (!p.since || post.publishedAt >= p.since) &&
+      terms.every((t) => `${post.title}\n${post.sourceName}`.toLowerCase().includes(t)),
   );
   const start = p.cursor ? Number(p.cursor) : 0;
   const end = start + (p.limit ?? 30);
@@ -218,6 +223,7 @@ export async function mockCrawl(): Promise<void> {
 let settings: CrawlSettings = {
   postsPerSource: 5,
   crawlHours: [7],
+  retentionDays: 90,
   timezone: 'Asia/Ho_Chi_Minh',
 };
 
@@ -229,6 +235,7 @@ export async function mockGetSettings(): Promise<CrawlSettings> {
 export async function mockSaveSettings(s: {
   postsPerSource: number;
   crawlHours: number[];
+  retentionDays: number;
 }): Promise<CrawlSettings> {
   await delay(300);
   settings = { ...settings, ...s, updatedAt: new Date().toISOString() };

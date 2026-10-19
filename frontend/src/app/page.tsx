@@ -11,15 +11,33 @@ import { getSources } from '@/lib/api';
 import { groupByDay, sinceFor, type DateRange } from '@/lib/time';
 import type { PublicSource } from '@/lib/types';
 
+const SEARCH_DEBOUNCE_MS = 300;
+
 export default function FeedPage() {
   const [sourceId, setSourceId] = useState<string>();
   // `since` is fixed when the range is picked so the query key stays stable across renders.
   const [date, setDate] = useState<{ range: DateRange; since?: string }>({ range: 'any' });
   const [sources, setSources] = useState<PublicSource[]>([]);
+  // `query` follows the input; `q` is what is searched, once typing pauses.
+  const [query, setQuery] = useState('');
+  const [q, setQ] = useState('');
   const { posts, loading, error, done, loadMore, retry } = usePosts({
     sourceId,
     since: date.since,
+    q: q || undefined,
   });
+
+  useEffect(() => {
+    const next = query.trim().replace(/\s+/g, ' ');
+    if (next === '') return; // cleared in onQueryChange, without waiting
+    const t = setTimeout(() => setQ(next), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  function onQueryChange(value: string) {
+    setQuery(value);
+    if (value.trim() === '') setQ('');
+  }
   const sentinel = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -57,6 +75,8 @@ export default function FeedPage() {
         sources={sources}
         sourceId={sourceId}
         range={date.range}
+        query={query}
+        onQueryChange={onQueryChange}
         onSourceChange={setSourceId}
         onRangeChange={(range) => setDate({ range, since: sinceFor(range, new Date()) })}
       />
@@ -78,7 +98,10 @@ export default function FeedPage() {
       )}
 
       {!hasPosts && !loading && !error && (
-        <EmptyState filtered={sourceId !== undefined || date.range !== 'any'} />
+        <EmptyState
+          filtered={sourceId !== undefined || date.range !== 'any'}
+          search={q || undefined}
+        />
       )}
 
       {hasPosts && <FeedGrid groups={groups} now={now} />}

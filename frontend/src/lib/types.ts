@@ -35,6 +35,8 @@ export interface AdminSource {
 export interface CrawlSettings {
   postsPerSource: number;
   crawlHours: number[];
+  /** Days to keep posts after publication; 0 = forever. */
+  retentionDays: number;
   timezone: string;
   updatedAt?: string;
 }

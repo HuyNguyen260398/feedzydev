@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { ApiError, getSettings, saveSettings } from '@/lib/api';
-import { MAX_POSTS, MIN_POSTS } from '@/lib/settings';
+import { KEEP_FOREVER, MAX_POSTS, MIN_POSTS, RETENTION_OPTIONS } from '@/lib/settings';
 import { formatHour, zoneOffsetLabel } from '@/lib/time';
 import type { CrawlSettings } from '@/lib/types';
 
@@ -16,6 +16,25 @@ function describeHours(hours: number[]): string {
   return `Crawls every day at ${list}.`;
 }
 
+function retentionLabel(days: number): string {
+  return RETENTION_OPTIONS.find((o) => o.days === days)?.label ?? `${days} days`;
+}
+
+/** The preset list, plus the saved value if it was set to something else via the API. */
+function retentionOptions(saved: number): { days: number; label: string }[] {
+  if (RETENTION_OPTIONS.some((o) => o.days === saved)) return RETENTION_OPTIONS;
+  return [...RETENTION_OPTIONS, { days: saved, label: `${saved} days` }].sort(
+    (a, b) => (a.days || Infinity) - (b.days || Infinity),
+  );
+}
+
+function describeRetention(days: number, saved: number): string {
+  if (days === KEEP_FOREVER) return 'Posts are kept forever.';
+  const base = `Posts published more than ${retentionLabel(days)} ago are deleted automatically.`;
+  const shorter = saved === KEEP_FOREVER || days < saved;
+  return shorter ? `${base} Older posts are removed within the hour after saving.` : base;
+}
+
 export default function CrawlSettingsPanel({
   onLoaded,
 }: {
@@ -24,6 +43,7 @@ export default function CrawlSettingsPanel({
   const [saved, setSaved] = useState<CrawlSettings>();
   const [posts, setPosts] = useState('');
   const [hours, setHours] = useState<number[]>([]);
+  const [retention, setRetention] = useState(KEEP_FOREVER);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
@@ -36,6 +56,7 @@ export default function CrawlSettingsPanel({
         setSaved(s);
         setPosts(String(s.postsPerSource));
         setHours(s.crawlHours);
+        setRetention(s.retentionDays);
         onLoaded?.(s);
       },
       (e: unknown) =>
@@ -49,7 +70,10 @@ export default function CrawlSettingsPanel({
   const postsNum = Number(posts);
   const postsValid = Number.isInteger(postsNum) && postsNum >= MIN_POSTS && postsNum <= MAX_POSTS;
   const dirty =
-    !!saved && (postsNum !== saved.postsPerSource || hours.join() !== saved.crawlHours.join());
+    !!saved &&
+    (postsNum !== saved.postsPerSource ||
+      hours.join() !== saved.crawlHours.join() ||
+      retention !== saved.retentionDays);
 
   function toggle(h: number) {
     setNotice(undefined);
@@ -63,9 +87,14 @@ export default function CrawlSettingsPanel({
     setError(undefined);
     setNotice(undefined);
     try {
-      const s = await saveSettings({ postsPerSource: postsNum, crawlHours: hours });
+      const s = await saveSettings({
+        postsPerSource: postsNum,
+        crawlHours: hours,
+        retentionDays: retention,
+      });
       setSaved(s);
       setHours(s.crawlHours);
+      setRetention(s.retentionDays);
       onLoaded?.(s);
       setNotice('Saved.');
     } catch (e) {
@@ -143,6 +172,40 @@ export default function CrawlSettingsPanel({
               {zoneOffsetLabel(saved.timezone)}).
             </p>
           </fieldset>
+
+          <div className="space-y-1.5">
+            <label htmlFor="retention" className="block text-sm font-medium">
+              Keep posts for
+            </label>
+            <div className="relative w-44">
+              <select
+                id="retention"
+                value={retention}
+                onChange={(e) => {
+                  setNotice(undefined);
+                  setRetention(Number(e.target.value));
+                }}
+                aria-describedby="retention-hint"
+                className="min-h-11 w-full cursor-pointer appearance-none rounded-lg border border-border bg-bg py-2 pr-9 pl-3 font-mono text-sm transition-colors duration-200 hover:border-accent/50"
+              >
+                {retentionOptions(saved.retentionDays).map((o) => (
+                  <option key={o.days} value={o.days}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 20 20"
+                className="pointer-events-none absolute top-1/2 right-3 h-4 w-4 -translate-y-1/2 text-muted"
+              >
+                <path d="M5 7.5 10 12.5 15 7.5" fill="none" stroke="currentColor" strokeWidth="2" />
+              </svg>
+            </div>
+            <p id="retention-hint" className="text-xs text-muted">
+              {describeRetention(retention, saved.retentionDays)}
+            </p>
+          </div>
 
           <div className="flex flex-wrap items-center gap-3">
             <button

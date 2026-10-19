@@ -9,7 +9,12 @@ vi.mock('@/lib/api', () => ({
   saveSettings: vi.fn(),
 }));
 
-const loaded = { postsPerSource: 5, crawlHours: [7], timezone: 'Asia/Ho_Chi_Minh' };
+const loaded = {
+  postsPerSource: 5,
+  crawlHours: [7],
+  retentionDays: 90,
+  timezone: 'Asia/Ho_Chi_Minh',
+};
 
 beforeEach(() => {
   vi.mocked(getSettings).mockReset().mockResolvedValue(loaded);
@@ -45,9 +50,34 @@ describe('CrawlSettingsPanel', () => {
     expect(screen.getByText(/Crawls every day at 8 AM and 1 PM\./)).toBeInTheDocument();
     fireEvent.click(saveBtn());
     await screen.findByText('Saved.');
-    expect(saveSettings).toHaveBeenCalledWith({ postsPerSource: 10, crawlHours: [8, 13] });
+    expect(saveSettings).toHaveBeenCalledWith({
+      postsPerSource: 10,
+      crawlHours: [8, 13],
+      retentionDays: 90,
+    });
     expect(onLoaded).toHaveBeenLastCalledWith(expect.objectContaining({ postsPerSource: 10 }));
     expect(saveBtn()).toBeDisabled();
+  });
+
+  it('edits retention, warning when it gets shorter', async () => {
+    render(<CrawlSettingsPanel />);
+    const retention = await screen.findByLabelText('Keep posts for');
+    expect(retention).toHaveValue('90');
+    expect(screen.getByText(/more than 90 days ago are deleted/)).toBeInTheDocument();
+    fireEvent.change(retention, { target: { value: '30' } });
+    expect(screen.getByText(/removed within the hour/)).toBeInTheDocument();
+    fireEvent.change(retention, { target: { value: '0' } });
+    expect(screen.getByText('Posts are kept forever.')).toBeInTheDocument();
+    fireEvent.click(saveBtn());
+    await screen.findByText('Saved.');
+    expect(saveSettings).toHaveBeenCalledWith(expect.objectContaining({ retentionDays: 0 }));
+  });
+
+  it('lists a non-preset saved retention', async () => {
+    vi.mocked(getSettings).mockResolvedValue({ ...loaded, retentionDays: 45 });
+    render(<CrawlSettingsPanel />);
+    expect(await screen.findByLabelText('Keep posts for')).toHaveValue('45');
+    expect(screen.getByRole('option', { name: '45 days' })).toBeInTheDocument();
   });
 
   it('no hours selected means auto-crawl off', async () => {
