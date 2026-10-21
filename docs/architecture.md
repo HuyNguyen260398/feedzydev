@@ -15,7 +15,8 @@ frontend is same-origin with the API and needs no CORS.
 | API compute | Lambda (single function, internal router) | Sources CRUD, posts list, "Crawl now" |
 | Crawler | Lambda | Fetches feeds, extracts thumbnails, writes posts |
 | Schedule | EventBridge Scheduler | `cron(0 7 * * ? *)`, Asia/Ho_Chi_Minh |
-| Data | DynamoDB (sources, posts) | On-demand billing |
+| Data | DynamoDB (sources, posts, settings, push-subscriptions) | On-demand billing |
+| Push | Web Push (VAPID) via the `web-push` npm package | Crawler notifies anonymous subscribers after full crawls with new posts |
 | Auth | Cognito + Google IdP | Pre-sign-up Lambda allows only the owner's email |
 | CI/CD | GitHub Actions + OIDC | Plan role (read-only) and deploy role (branch-scoped) |
 | State | S3 (native lockfile) | Terraform remote state |
@@ -81,6 +82,30 @@ flowchart LR
 ```
 
 A failing source is recorded and skipped; it never aborts the whole crawl.
+
+### Push notification
+
+```mermaid
+sequenceDiagram
+    participant B as Browser / PWA
+    participant API as API Lambda
+    participant DS as DynamoDB push-subscriptions
+    participant CR as Crawler Lambda
+    participant PS as Push service (FCM, Mozilla, Apple, WNS)
+    participant SW as Service worker
+    B->>API: POST /api/push/subscriptions (bell click, after permission)
+    API->>DS: upsert id = sha256(endpoint)
+    Note over CR: full crawl (scheduled or "Crawl now") inserted new posts
+    CR->>DS: Scan subscriptions
+    CR->>PS: VAPID-signed push (newest post title, count)
+    PS-->>CR: 404/410 → delete subscription
+    PS->>SW: push event
+    SW->>B: showNotification; click focuses or opens /
+```
+
+Single-source crawls never notify. Endpoints are limited to known push services, the table is
+capped at 1000 subscriptions, and push failures are logged (`push.summary`, `push.failed`) without
+affecting the crawl.
 
 ## Deploy
 

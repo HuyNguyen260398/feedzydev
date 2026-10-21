@@ -145,3 +145,12 @@ export async function saveSettings(s: {
   if (process.env.NEXT_PUBLIC_MOCK === '1') return (await import('@/lib/mock')).mockSaveSettings(s);
   return request<CrawlSettings>('/admin/settings', { method: 'PUT', body: s, admin: true });
 }
+
+/** Stores this browser's push subscription; idempotent, so it doubles as a refresh. */
+export async function postSubscription(sub: PushSubscriptionJSON): Promise<{ id: string }> {
+  return request<{ id: string }>('/push/subscriptions', { method: 'POST', body: sub });
+}
+
+export async function deleteSubscription(id: string): Promise<void> {
+  await request<void>(`/push/subscriptions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}

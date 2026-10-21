@@ -3,9 +3,11 @@ import { AppError } from '../lib/errors';
 import { parseFeed } from '../lib/feed';
 import { discoverFeeds } from '../lib/discover';
 import type { FetchText } from '../lib/http';
+import { MAX_SUBSCRIPTIONS, parseSubscription, subscriptionId } from '../lib/push';
 import type { PostsRepo } from '../lib/repo/posts';
 import type { SettingsRepo } from '../lib/repo/settings';
 import type { SourcesRepo } from '../lib/repo/sources';
+import type { SubscriptionsRepo } from '../lib/repo/subscriptions';
 import {
   CRAWL_TIMEZONE,
   MAX_POSTS_PER_SOURCE,
@@ -25,6 +27,7 @@ export interface ApiDeps {
   sources: SourcesRepo;
   posts: PostsRepo;
   settings: SettingsRepo;
+  subscriptions: Pick<SubscriptionsRepo, 'exists' | 'count' | 'put' | 'remove'>;
   fetchText: FetchText;
   invokeCrawl: (p: { sourceId?: string }) => Promise<void>;
   allowedEmail: string;
@@ -103,6 +106,20 @@ async function listPublicSources(deps: ApiDeps) {
       ...(s.iconUrl ? { iconUrl: s.iconUrl } : {}),
     }));
   return json(200, { items });
+}
+
+async function subscribe(event: APIGatewayProxyEvent, deps: ApiDeps) {
+  const sub = parseSubscription(parseBody(event));
+  const id = subscriptionId(sub.endpoint);
+  // The cap only applies to new devices; refreshing an existing one always works.
+  if (
+    !(await deps.subscriptions.exists(id)) &&
+    (await deps.subscriptions.count()) >= MAX_SUBSCRIPTIONS
+  ) {
+    return fail(503, 'SUBSCRIPTIONS_FULL', 'Notification sign-ups are full right now.');
+  }
+  const saved = await deps.subscriptions.put(sub);
+  return json(201, { id: saved.id });
 }
 
 async function discover(event: APIGatewayProxyEvent, deps: ApiDeps) {
@@ -266,6 +283,12 @@ export async function route(
     }
     if (method === 'GET' && path === '/posts') return await listPosts(event, deps);
     if (method === 'GET' && path === '/sources') return await listPublicSources(deps);
+    if (method === 'POST' && path === '/push/subscriptions') return await subscribe(event, deps);
+    const sub = /^\/push\/subscriptions\/([^/]+)$/.exec(path);
+    if (method === 'DELETE' && sub) {
+      await deps.subscriptions.remove(decodeURIComponent(sub[1]));
+      return json(204);
+    }
     return fail(404, 'NOT_FOUND', 'Not found.');
   } catch (err) {
     if (err instanceof AppError) return fail(err.status, err.code, err.message);

@@ -192,6 +192,31 @@ aws logs tail /aws/lambda/feedzydev-claude-prod-api     --since 30m --region ap-
 
 ---
 
+## 7. Push notifications (one-time) — Owner
+
+Generate one VAPID key pair. Keep the private key out of the repo and the shell history:
+
+```bash
+npx web-push generate-vapid-keys
+gh variable set VAPID_PUBLIC_KEY -R HuyNguyen260398/feedzydev -b <public key>
+gh secret set VAPID_PRIVATE_KEY  -R HuyNguyen260398/feedzydev   # paste the private key when prompted
+```
+
+The public key goes to the frontend build (`NEXT_PUBLIC_VAPID_PUBLIC_KEY`) and Terraform
+(`TF_VAR_vapid_public_key`); the private key reaches only the crawler Lambda. Rotating the pair
+invalidates every existing subscription, so don't rotate unless it leaks.
+
+**Verify after the next deploy — Owner:**
+
+- [ ] Desktop Chrome: the bell appears in the header; clicking it prompts, then shows filled.
+- [ ] Android Chrome (installed app): same.
+- [ ] iPhone: in a Safari tab the bell explains Add to Home Screen; in the installed app it subscribes.
+- [ ] Sources → "Crawl now" with a source that has fresh posts: a notification arrives titled with the
+      newest post and "<source> · Click to read N more posts".
+- [ ] Tapping it focuses an open feedzydev tab (or opens one) on the feed.
+- [ ] Turning the bell off, then crawling again: nothing arrives.
+- [ ] Crawler logs show `push.summary` with the expected `sent` count (no `push.failed`).
+
 ## Rollback
 
 | Situation                   | Action                                                                                                                   |

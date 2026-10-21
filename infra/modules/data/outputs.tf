@@ -21,3 +21,11 @@ output "settings_table_name" {
 output "settings_table_arn" {
   value = aws_dynamodb_table.settings.arn
 }
+
+output "push_subscriptions_table_name" {
+  value = aws_dynamodb_table.push_subscriptions.name
+}
+
+output "push_subscriptions_table_arn" {
+  value = aws_dynamodb_table.push_subscriptions.arn
+}

@@ -5,7 +5,8 @@ A personal morning feed of new DevOps tech blog posts. Every day at 07:00
 owner curates; the site shows the posts as scannable cards (thumbnail, title,
 author, date, source) that link to the original article. The feed is public;
 only the owner (Google sign-in, single allowed email) can manage sources and
-trigger a crawl.
+trigger a crawl. Anyone can turn on the header bell to get a Web Push
+notification (browser or installed PWA) when a crawl finds new posts.
 
 Live site: https://feedzydev-claude.nghuy.link
 
@@ -38,7 +39,8 @@ NEXT_PUBLIC_MOCK=1 pnpm dev      # UI against built-in mock data, no AWS needed
 ```
 
 For a real backend set `NEXT_PUBLIC_USER_POOL_ID`, `NEXT_PUBLIC_USER_POOL_CLIENT_ID`
-and `NEXT_PUBLIC_COGNITO_DOMAIN` (see `frontend/.env.example`). Never set
+and `NEXT_PUBLIC_COGNITO_DOMAIN` (see `frontend/.env.example`), plus
+`NEXT_PUBLIC_VAPID_PUBLIC_KEY` to show the notification bell. Never set
 `NEXT_PUBLIC_MOCK` in CI or deploy builds.
 
 ## Quality gates
@@ -95,11 +97,13 @@ existing names. Values come from the bootstrap outputs and the Google client.
 gh variable set AWS_REGION            --body "ap-southeast-1"
 gh variable set STATE_BUCKET_NAME     --body "feedzydev-claude-tfstate-010382427026"
 gh variable set ALLOWED_EMAIL         --body "huynguyen260398@gmail.com"
+gh variable set VAPID_PUBLIC_KEY      --body "<from npx web-push generate-vapid-keys>"
 
 gh secret set AWS_PLAN_ROLE_ARN   --body "$(cd infra/bootstrap && terraform output -raw plan_role_arn)"
 gh secret set AWS_DEPLOY_ROLE_ARN --body "$(cd infra/bootstrap && terraform output -raw deploy_role_arn)"
 gh secret set GOOGLE_CLIENT_ID     # paste when prompted
 gh secret set GOOGLE_CLIENT_SECRET # paste when prompted
+gh secret set VAPID_PRIVATE_KEY    # paste when prompted
 ```
 
 ### 4. Push to deploy

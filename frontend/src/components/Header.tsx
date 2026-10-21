@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import InstallButton from '@/components/InstallButton';
+import NotifyButton from '@/components/NotifyButton';
 import ThemeToggle from '@/components/ThemeToggle';
 
 const LINKS = [
@@ -44,6 +45,7 @@ export default function Header() {
             })}
           </nav>
           <InstallButton />
+          <NotifyButton />
           <ThemeToggle />
         </div>
       </div>
