@@ -9,6 +9,7 @@ locals {
   sources_table = "arn:aws:dynamodb:${var.region}:${local.account_id}:table/${var.name_prefix}-sources"
   posts_table   = "arn:aws:dynamodb:${var.region}:${local.account_id}:table/${var.name_prefix}-posts"
   settings_tbl  = "arn:aws:dynamodb:${var.region}:${local.account_id}:table/${var.name_prefix}-settings"
+  subs_table    = "arn:aws:dynamodb:${var.region}:${local.account_id}:table/${var.name_prefix}-push-subscriptions"
   crawler_name  = "${var.name_prefix}-crawler"
   crawler_arn   = "arn:aws:lambda:${var.region}:${local.account_id}:function:${local.crawler_name}"
 }
@@ -37,6 +38,11 @@ data "aws_iam_policy_document" "api" {
     actions   = ["dynamodb:GetItem", "dynamodb:PutItem"]
     resources = [local.settings_tbl]
   }
+  # Public subscribe (exists check, cap count, upsert) and unsubscribe.
+  statement {
+    actions   = ["dynamodb:GetItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem", "dynamodb:Scan"]
+    resources = [local.subs_table]
+  }
   statement {
     actions   = ["lambda:InvokeFunction"]
     resources = [local.crawler_arn]
@@ -60,6 +66,11 @@ data "aws_iam_policy_document" "crawler" {
   statement {
     actions   = ["dynamodb:GetItem"]
     resources = [local.settings_tbl]
+  }
+  # Push fan-out: list subscribers and prune the ones push services report gone.
+  statement {
+    actions   = ["dynamodb:Scan", "dynamodb:DeleteItem"]
+    resources = [local.subs_table]
   }
 }
 
@@ -97,6 +108,7 @@ module "api_lambda" {
     SOURCES_TABLE         = module.data.sources_table_name
     POSTS_TABLE           = module.data.posts_table_name
     SETTINGS_TABLE        = module.data.settings_table_name
+    SUBSCRIPTIONS_TABLE   = module.data.push_subscriptions_table_name
     ALLOWED_EMAIL         = var.allowed_email
     CRAWLER_FUNCTION_NAME = local.crawler_name
   }
@@ -112,9 +124,13 @@ module "crawler" {
   memory_size              = 512
   reserved_concurrency     = 1
   environment = {
-    SOURCES_TABLE  = module.data.sources_table_name
-    POSTS_TABLE    = module.data.posts_table_name
-    SETTINGS_TABLE = module.data.settings_table_name
+    SOURCES_TABLE       = module.data.sources_table_name
+    POSTS_TABLE         = module.data.posts_table_name
+    SETTINGS_TABLE      = module.data.settings_table_name
+    SUBSCRIPTIONS_TABLE = module.data.push_subscriptions_table_name
+    VAPID_PUBLIC_KEY    = var.vapid_public_key
+    VAPID_PRIVATE_KEY   = var.vapid_private_key
+    VAPID_SUBJECT       = "mailto:${var.allowed_email}"
   }
   policy_json = data.aws_iam_policy_document.crawler.json
 }

@@ -48,3 +48,14 @@ variable "google_client_secret" {
   description = "Google OAuth client secret."
   sensitive   = true
 }
+
+variable "vapid_public_key" {
+  type        = string
+  description = "Web Push VAPID public key (also baked into the frontend build)."
+}
+
+variable "vapid_private_key" {
+  type        = string
+  description = "Web Push VAPID private key, used by the crawler to sign pushes."
+  sensitive   = true
+}

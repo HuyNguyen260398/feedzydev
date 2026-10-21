@@ -54,6 +54,8 @@ jobs:
           TF_VAR_allowed_email: ${{ vars.ALLOWED_EMAIL }}
           TF_VAR_google_client_id: ${{ secrets.GOOGLE_CLIENT_ID }}
           TF_VAR_google_client_secret: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          TF_VAR_vapid_public_key: ${{ vars.VAPID_PUBLIC_KEY }}
+          TF_VAR_vapid_private_key: ${{ secrets.VAPID_PRIVATE_KEY }}
         run: terraform apply -auto-approve -input=false
 
       - name: Capture outputs
@@ -78,6 +80,7 @@ jobs:
           NEXT_PUBLIC_USER_POOL_ID: ${{ steps.tf.outputs.pool_id }}
           NEXT_PUBLIC_USER_POOL_CLIENT_ID: ${{ steps.tf.outputs.client_id }}
           NEXT_PUBLIC_COGNITO_DOMAIN: ${{ steps.tf.outputs.cognito_domain }}
+          NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${{ vars.VAPID_PUBLIC_KEY }}
         run: |
           pnpm install --frozen-lockfile
           pnpm run build

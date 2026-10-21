@@ -24,6 +24,24 @@ resource "aws_api_gateway_resource" "sources" {
   path_part   = "sources"
 }
 
+resource "aws_api_gateway_resource" "push" {
+  rest_api_id = aws_api_gateway_rest_api.this.id
+  parent_id   = aws_api_gateway_rest_api.this.root_resource_id
+  path_part   = "push"
+}
+
+resource "aws_api_gateway_resource" "push_subscriptions" {
+  rest_api_id = aws_api_gateway_rest_api.this.id
+  parent_id   = aws_api_gateway_resource.push.id
+  path_part   = "subscriptions"
+}
+
+resource "aws_api_gateway_resource" "push_subscription" {
+  rest_api_id = aws_api_gateway_rest_api.this.id
+  parent_id   = aws_api_gateway_resource.push_subscriptions.id
+  path_part   = "{id}"
+}
+
 resource "aws_api_gateway_resource" "admin" {
   rest_api_id = aws_api_gateway_rest_api.this.id
   parent_id   = aws_api_gateway_rest_api.this.root_resource_id
@@ -69,6 +87,39 @@ resource "aws_api_gateway_integration" "sources" {
   uri                     = var.lambda_invoke_arn
 }
 
+# Public push subscribe / unsubscribe (anonymous devices)
+resource "aws_api_gateway_method" "push_subscribe" {
+  rest_api_id   = aws_api_gateway_rest_api.this.id
+  resource_id   = aws_api_gateway_resource.push_subscriptions.id
+  http_method   = "POST"
+  authorization = "NONE"
+}
+
+resource "aws_api_gateway_integration" "push_subscribe" {
+  rest_api_id             = aws_api_gateway_rest_api.this.id
+  resource_id             = aws_api_gateway_resource.push_subscriptions.id
+  http_method             = aws_api_gateway_method.push_subscribe.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.lambda_invoke_arn
+}
+
+resource "aws_api_gateway_method" "push_unsubscribe" {
+  rest_api_id   = aws_api_gateway_rest_api.this.id
+  resource_id   = aws_api_gateway_resource.push_subscription.id
+  http_method   = "DELETE"
+  authorization = "NONE"
+}
+
+resource "aws_api_gateway_integration" "push_unsubscribe" {
+  rest_api_id             = aws_api_gateway_rest_api.this.id
+  resource_id             = aws_api_gateway_resource.push_subscription.id
+  http_method             = aws_api_gateway_method.push_unsubscribe.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.lambda_invoke_arn
+}
+
 # Admin (Cognito-protected)
 resource "aws_api_gateway_method" "admin_proxy" {
   rest_api_id   = aws_api_gateway_rest_api.this.id
@@ -105,14 +156,21 @@ resource "aws_api_gateway_deployment" "this" {
     redeploy = sha1(jsonencode([
       aws_api_gateway_resource.posts.id,
       aws_api_gateway_resource.sources.id,
+      aws_api_gateway_resource.push.id,
+      aws_api_gateway_resource.push_subscriptions.id,
+      aws_api_gateway_resource.push_subscription.id,
       aws_api_gateway_resource.admin.id,
       aws_api_gateway_resource.admin_proxy.id,
       aws_api_gateway_method.posts.id,
       aws_api_gateway_method.sources.id,
+      aws_api_gateway_method.push_subscribe.id,
+      aws_api_gateway_method.push_unsubscribe.id,
       aws_api_gateway_method.admin_proxy.id,
       aws_api_gateway_method.admin_proxy.request_parameters,
       aws_api_gateway_integration.posts.id,
       aws_api_gateway_integration.sources.id,
+      aws_api_gateway_integration.push_subscribe.id,
+      aws_api_gateway_integration.push_unsubscribe.id,
       aws_api_gateway_integration.admin_proxy.id,
       aws_api_gateway_authorizer.cognito.id,
     ]))

@@ -70,3 +70,15 @@ resource "aws_dynamodb_table" "settings" {
     enabled = true
   }
 }
+
+# Anonymous Web Push subscriptions (id = sha256 of the endpoint). Disposable: browsers re-subscribe.
+resource "aws_dynamodb_table" "push_subscriptions" {
+  name         = "${var.name_prefix}-push-subscriptions"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "id"
+
+  attribute {
+    name = "id"
+    type = "S"
+  }
+}
