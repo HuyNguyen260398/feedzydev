@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { isIos, isStandalone } from '@/lib/platform';
 
 // Chromium's install prompt event; not in the DOM typings.
 interface BeforeInstallPromptEvent extends Event {
@@ -9,19 +10,6 @@ interface BeforeInstallPromptEvent extends Event {
 }
 
 const noop = () => () => {};
-
-function isStandalone(): boolean {
-  return (
-    window.matchMedia?.('(display-mode: standalone)').matches ||
-    (navigator as Navigator & { standalone?: boolean }).standalone === true
-  );
-}
-
-/** iOS/iPadOS have no install prompt; the user adds the app from the Share menu. */
-function isIos(): boolean {
-  const ua = navigator.userAgent;
-  return /iphone|ipad|ipod/i.test(ua) || (/macintosh/i.test(ua) && navigator.maxTouchPoints > 1);
-}
 
 const btn =
   'inline-flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-border bg-surface text-muted transition-colors hover:text-accent';

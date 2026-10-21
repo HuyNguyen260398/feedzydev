@@ -135,3 +135,61 @@ async function navigate(req) {
     );
   }
 }
+
+// --- Push notifications (new posts after a crawl) ---
+
+const FALLBACK_NOTIFICATION = { title: 'New posts on feedzydev', body: 'Click to read' };
+
+/**
+ * Turns a push payload into showNotification() arguments. Missing or malformed data still
+ * yields a generic notification: browsers penalise pushes that show nothing.
+ */
+function notificationFromPush(data) {
+  let p = {};
+  try {
+    const parsed = data ? data.json() : null;
+    if (parsed && typeof parsed === 'object') p = parsed;
+  } catch {
+    // not JSON; use the fallback
+  }
+  const title = typeof p.title === 'string' && p.title ? p.title : FALLBACK_NOTIFICATION.title;
+  const body = typeof p.body === 'string' && p.body ? p.body : FALLBACK_NOTIFICATION.body;
+  const url = typeof p.url === 'string' && /^\/(?!\/)/.test(p.url) ? p.url : '/';
+  return {
+    title,
+    options: {
+      body,
+      icon: '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+      ...(typeof p.image === 'string' && p.image ? { image: p.image } : {}),
+      tag: typeof p.tag === 'string' && p.tag ? p.tag : 'feedzy-new-posts',
+      renotify: true,
+      data: { url },
+    },
+  };
+}
+
+self.addEventListener('push', (event) => {
+  const { title, options } = notificationFromPush(event.data);
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = new URL(
+    (event.notification.data && event.notification.data.url) || '/',
+    self.location.origin,
+  ).href;
+  event.waitUntil(
+    (async () => {
+      const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      const client = windows.find((c) => new URL(c.url).origin === self.location.origin);
+      if (client) {
+        await client.navigate(url).catch(() => {});
+        await client.focus();
+        return;
+      }
+      await self.clients.openWindow(url);
+    })(),
+  );
+});
