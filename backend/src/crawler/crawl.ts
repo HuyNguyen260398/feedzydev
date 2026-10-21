@@ -6,7 +6,7 @@ import type { PostsRepo } from '../lib/repo/posts';
 import type { SettingsRepo } from '../lib/repo/settings';
 import type { SourcesRepo } from '../lib/repo/sources';
 import { DEFAULT_SETTINGS, KEEP_FOREVER, localHour } from '../lib/settings';
-import type { Settings, Source } from '../lib/types';
+import type { Post, Settings, Source } from '../lib/types';
 import { MAX_AGE_DAYS, toPosts } from './entries';
 
 export interface CrawlDeps {
@@ -22,6 +22,8 @@ export interface SourceResult {
   status: 'ok' | 'error';
   newCount: number;
   error?: string;
+  /** Newest post this run inserted, for the push notification; never persisted or logged. */
+  newest?: Post;
 }
 
 export const OG_FETCH_BUDGET = 30;
@@ -47,13 +49,14 @@ async function crawlInner(
   now: Date,
   limit: number,
   maxAge: number,
-): Promise<number> {
+): Promise<{ newCount: number; newest?: Post }> {
   const res = await deps.fetchText(source.feedUrl, { timeoutMs: 10000 });
   if (res.status < 200 || res.status >= 300) throw new Error(`HTTP ${res.status}`);
   const feed = parseFeed(res.body, source.feedUrl);
   if (!feed) throw new Error('Not a valid feed');
 
   let newCount = 0;
+  let newest: Post | undefined;
   for (const post of toPosts(feed.entries, source, now, limit, maxAge)) {
     if (await deps.posts.exists(post.postId)) continue;
     if (!post.thumbnailUrl && budget.og > 0) {
@@ -68,9 +71,12 @@ async function crawlInner(
         // og:image is best-effort
       }
     }
-    if (await deps.posts.putIfAbsent(post)) newCount++;
+    if (await deps.posts.putIfAbsent(post)) {
+      newCount++;
+      if (!newest || post.publishedAt > newest.publishedAt) newest = post;
+    }
   }
-  return newCount;
+  return newest ? { newCount, newest } : { newCount };
 }
 
 export async function crawlSource(
@@ -83,8 +89,8 @@ export async function crawlSource(
   const limit = source.postsPerSource ?? settings.postsPerSource;
   let result: SourceResult;
   try {
-    const newCount = await crawlInner(source, deps, budget, now, limit, maxAgeDays(settings));
-    result = { sourceId: source.sourceId, status: 'ok', newCount };
+    const inner = await crawlInner(source, deps, budget, now, limit, maxAgeDays(settings));
+    result = { sourceId: source.sourceId, status: 'ok', ...inner };
   } catch (err) {
     result = {
       sourceId: source.sourceId,

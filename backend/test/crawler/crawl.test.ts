@@ -93,7 +93,14 @@ describe('crawl', () => {
       url.endsWith('/feed') ? { status: 200, body: feedXml } : { status: 404, body: '' },
     );
     const res = await crawlAllOk(deps, {});
-    expect(res).toEqual([{ sourceId: 'a', status: 'ok', newCount: 3 }]);
+    expect(res).toEqual([
+      {
+        sourceId: 'a',
+        status: 'ok',
+        newCount: 3,
+        newest: expect.objectContaining({ sourceId: 'a' }),
+      },
+    ]);
     expect(saved).toHaveLength(3);
     expect(recorded).toHaveLength(1);
     expect(recorded[0].r).toMatchObject({ status: 'ok', newCount: 3 });
@@ -181,6 +188,37 @@ describe('crawl', () => {
     const one = setup(sources, rssOk);
     expect((await crawlAllOk(one.deps, { sourceId: 'b' })).map((r) => r.sourceId)).toEqual(['b']);
     expect(await crawlAllOk(one.deps, { sourceId: 'zzz' })).toEqual([]);
+  });
+
+  it('results carry the newest inserted post by publishedAt', async () => {
+    const t = setup([mkSource('a')], rssOk);
+    const [r] = await crawlAllOk(t.deps, { sourceId: 'a' });
+    const max = [...t.saved].sort((x, y) => y.publishedAt.localeCompare(x.publishedAt))[0];
+    expect(t.saved.length).toBeGreaterThan(1);
+    expect(r.newest).toBe(max);
+    expect(t.recorded[0].r).not.toHaveProperty('newest');
+  });
+
+  it('newest skips posts that already existed', async () => {
+    const first = setup([mkSource('a')], rssOk);
+    await crawlAllOk(first.deps, {});
+    const byDate = [...first.saved].sort((x, y) => y.publishedAt.localeCompare(x.publishedAt));
+    const t = setup([mkSource('a')], rssOk, [byDate[0].postId]);
+    const [r] = await crawlAllOk(t.deps, {});
+    expect(r.newest?.postId).toBe(byDate[1].postId);
+  });
+
+  it('no newest when every post already exists', async () => {
+    const first = setup([mkSource('a')], rssOk);
+    await crawlAllOk(first.deps, {});
+    const t = setup(
+      [mkSource('a')],
+      rssOk,
+      first.saved.map((p) => p.postId),
+    );
+    const [r] = await crawlAllOk(t.deps, {});
+    expect(r.newCount).toBe(0);
+    expect(r).not.toHaveProperty('newest');
   });
 
   it('putIfAbsent false is not counted', async () => {
