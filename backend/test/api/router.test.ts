@@ -77,10 +77,22 @@ function mk() {
       }),
     ),
   };
+  const subscriptions = {
+    exists: jest.fn(async () => false),
+    count: jest.fn(async () => 0),
+    put: jest.fn(async (s: { endpoint: string; p256dh: string; auth: string }) => ({
+      ...s,
+      id: 'SUBID',
+      createdAt: 't',
+      updatedAt: 't',
+    })),
+    remove: jest.fn(async () => undefined),
+  };
   const deps = {
     sources,
     posts,
     settings,
+    subscriptions,
     fetchText: jest.fn(async (url: string) => ({
       status: 200,
       url,
@@ -95,6 +107,7 @@ function mk() {
     sources,
     posts,
     settings,
+    subscriptions,
     fetchText: deps.fetchText,
     calls,
     invokeCrawl: deps.invokeCrawl,
@@ -173,6 +186,79 @@ describe('public routes', () => {
     const r = await route(ev('GET', '/nope'), mk().deps);
     expect(r.statusCode).toBe(404);
     expect(parse(r).error.code).toBe('NOT_FOUND');
+  });
+});
+
+describe('push subscription routes', () => {
+  const sub = {
+    endpoint: 'https://fcm.googleapis.com/fcm/send/abc',
+    keys: { p256dh: 'BNc-_1', auth: 'tB_-2' },
+  };
+  const post = (body: unknown) =>
+    ev('POST', '/push/subscriptions', {
+      body: typeof body === 'string' ? body : JSON.stringify(body),
+    });
+
+  test('POST stores a valid subscription without auth', async () => {
+    const m = mk();
+    const r = await route(post(sub), m.deps);
+    expect(r.statusCode).toBe(201);
+    expect(parse(r)).toEqual({ id: 'SUBID' });
+    expect(m.subscriptions.put).toHaveBeenCalledWith({
+      endpoint: sub.endpoint,
+      p256dh: 'BNc-_1',
+      auth: 'tB_-2',
+    });
+  });
+
+  test('POST rejects a non push-service endpoint', async () => {
+    const m = mk();
+    const r = await route(post({ ...sub, endpoint: 'https://example.com/x' }), m.deps);
+    expect(r.statusCode).toBe(400);
+    expect(parse(r).error.code).toBe('INVALID_SUBSCRIPTION');
+    expect(m.subscriptions.put).not.toHaveBeenCalled();
+  });
+
+  test('POST with unparsable body is INVALID_JSON', async () => {
+    const r = await route(post('nope'), mk().deps);
+    expect(r.statusCode).toBe(400);
+    expect(parse(r).error.code).toBe('INVALID_JSON');
+  });
+
+  test('POST of a new id at the cap is 503 SUBSCRIPTIONS_FULL', async () => {
+    const m = mk();
+    m.subscriptions.count.mockResolvedValue(1000);
+    const r = await route(post(sub), m.deps);
+    expect(r.statusCode).toBe(503);
+    expect(parse(r).error).toEqual({
+      code: 'SUBSCRIPTIONS_FULL',
+      message: 'Notification sign-ups are full right now.',
+    });
+    expect(m.subscriptions.put).not.toHaveBeenCalled();
+  });
+
+  test('re-POST of an existing id succeeds at the cap without counting', async () => {
+    const m = mk();
+    m.subscriptions.exists.mockResolvedValue(true);
+    m.subscriptions.count.mockResolvedValue(1000);
+    const r = await route(post(sub), m.deps);
+    expect(r.statusCode).toBe(201);
+    expect(m.subscriptions.count).not.toHaveBeenCalled();
+  });
+
+  test.each(['/push/subscriptions/abc', '/push/subscriptions/abc/'])(
+    'DELETE %s is 204',
+    async (path) => {
+      const m = mk();
+      const r = await route(ev('DELETE', path), m.deps);
+      expect(r.statusCode).toBe(204);
+      expect(m.subscriptions.remove).toHaveBeenCalledWith('abc');
+    },
+  );
+
+  test('GET /push/subscriptions is 404', async () => {
+    const r = await route(ev('GET', '/push/subscriptions'), mk().deps);
+    expect(r.statusCode).toBe(404);
   });
 });
 

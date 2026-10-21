@@ -6,6 +6,7 @@ import { fetchText } from '../lib/http';
 import { PostsRepo } from '../lib/repo/posts';
 import { SettingsRepo } from '../lib/repo/settings';
 import { SourcesRepo } from '../lib/repo/sources';
+import { SubscriptionsRepo } from '../lib/repo/subscriptions';
 import { route, type ApiDeps } from './router';
 
 const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -16,6 +17,7 @@ const deps: ApiDeps = {
   sources: new SourcesRepo(doc, process.env.SOURCES_TABLE ?? ''),
   posts: new PostsRepo(doc, process.env.POSTS_TABLE ?? ''),
   settings: new SettingsRepo(doc, process.env.SETTINGS_TABLE ?? ''),
+  subscriptions: new SubscriptionsRepo(doc, process.env.SUBSCRIPTIONS_TABLE ?? ''),
   fetchText,
   allowedEmail: process.env.ALLOWED_EMAIL ?? '',
   invokeCrawl: async (p) => {
