@@ -4,6 +4,7 @@ import BackToTop from '@/components/BackToTop';
 import Header from '@/components/Header';
 import Providers from '@/components/Providers';
 import ServiceWorker from '@/components/ServiceWorker';
+import SplashScreen from '@/components/SplashScreen';
 import { THEME_COLORS } from '@/lib/themeColors';
 import './globals.css';
 
@@ -41,6 +42,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
       <body>
+        <SplashScreen />
+        <noscript>
+          <style>{'.fz-splash{display:none}'}</style>
+        </noscript>
         <Providers>
           <Header />
           <main className="mx-auto max-w-5xl px-3 py-6 sm:px-4">{children}</main>
