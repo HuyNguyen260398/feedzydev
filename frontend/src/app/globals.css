@@ -86,3 +86,40 @@ body {
     transform: none;
   }
 }
+
+/* First-load splash: blinking cursor + indeterminate progress bar. */
+.fz-splash-cursor {
+  animation: fz-blink 1s steps(1) infinite;
+}
+.fz-splash-bar {
+  animation: fz-progress 1.1s ease-in-out infinite;
+}
+@keyframes fz-blink {
+  50% {
+    opacity: 0;
+  }
+}
+@keyframes fz-progress {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+
+/* Safety net: if JS never hydrates, don't leave the page covered. */
+.fz-splash {
+  animation: fz-splash-timeout 0s linear 10s forwards;
+}
+@keyframes fz-splash-timeout {
+  to {
+    visibility: hidden;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fz-splash-cursor,
+  .fz-splash-bar {
+    animation: none;
+  }
+}
