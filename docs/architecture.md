@@ -14,7 +14,7 @@ frontend is same-origin with the API and needs no CORS.
 | API | API Gateway REST | Public GETs; write methods behind a Cognito authorizer |
 | API compute | Lambda (single function, internal router) | Sources CRUD, posts list, "Crawl now" |
 | Crawler | Lambda | Fetches feeds, extracts thumbnails, writes posts |
-| Schedule | EventBridge Scheduler | `cron(0 7 * * ? *)`, Asia/Ho_Chi_Minh |
+| Schedule | EventBridge Scheduler | `cron(0 * * * ? *)` (hourly), Asia/Ho_Chi_Minh; the crawler runs only at the crawl hours saved in settings (default 07:00) |
 | Data | DynamoDB (sources, posts, settings, push-subscriptions) | On-demand billing |
 | Push | Web Push (VAPID) via the `web-push` npm package | Crawler notifies anonymous subscribers after full crawls with new posts |
 | Auth | Cognito + Google IdP | Pre-sign-up Lambda allows only the owner's email |
@@ -75,13 +75,16 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-    S[EventBridge Scheduler<br/>07:00 Asia/Ho_Chi_Minh] --> CR[Crawler Lambda]
+    S[EventBridge Scheduler<br/>hourly, Asia/Ho_Chi_Minh] --> CR[Crawler Lambda]
+    CR -->|read crawl hours| DST[(DynamoDB settings)]
     CR -->|list enabled| DS[(DynamoDB sources)]
     CR -->|fetch RSS/Atom| W[Blog feeds]
     CR -->|new posts + thumbnails| DP[(DynamoDB posts)]
 ```
 
-A failing source is recorded and skipped; it never aborts the whole crawl.
+The scheduler fires every hour; the crawler exits early unless the current hour is one of the
+crawl hours saved in settings (editable from the UI, default 07:00). A failing source is recorded
+and skipped; it never aborts the whole crawl.
 
 ### Push notification
 
