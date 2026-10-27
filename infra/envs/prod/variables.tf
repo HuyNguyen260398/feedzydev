@@ -52,10 +52,21 @@ variable "google_client_secret" {
 variable "vapid_public_key" {
   type        = string
   description = "Web Push VAPID public key (also baked into the frontend build)."
+
+  # An empty key deploys fine but silently turns push off (crawler logs push.skipped).
+  validation {
+    condition     = can(regex("^B[A-Za-z0-9_-]{86}$", var.vapid_public_key))
+    error_message = "vapid_public_key must be a base64url P-256 public key (87 chars, from `npx web-push generate-vapid-keys`). Is the VAPID_PUBLIC_KEY repo variable set?"
+  }
 }
 
 variable "vapid_private_key" {
   type        = string
   description = "Web Push VAPID private key, used by the crawler to sign pushes."
   sensitive   = true
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_-]{43}$", var.vapid_private_key))
+    error_message = "vapid_private_key must be a base64url P-256 private key (43 chars). Is the VAPID_PRIVATE_KEY repo secret set?"
+  }
 }
