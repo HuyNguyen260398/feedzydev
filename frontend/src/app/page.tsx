@@ -4,14 +4,17 @@ import { useEffect, useRef, useState } from 'react';
 import EmptyState from '@/components/EmptyState';
 import ErrorBanner from '@/components/ErrorBanner';
 import FeedGrid from '@/components/FeedGrid';
+import FeedLoading from '@/components/FeedLoading';
 import FilterBar from '@/components/FilterBar';
-import SkeletonCard from '@/components/SkeletonCard';
+import { useMinVisible } from '@/hooks/useMinVisible';
 import { usePosts } from '@/hooks/usePosts';
 import { getSources } from '@/lib/api';
 import { groupByDay, sinceFor, type DateRange } from '@/lib/time';
 import type { PublicSource } from '@/lib/types';
 
 const SEARCH_DEBOUNCE_MS = 300;
+// Keep the feed loader up at least this long so a fast search or filter doesn't just flicker.
+const MIN_LOADER_MS = 400;
 
 export default function FeedPage() {
   const [sourceId, setSourceId] = useState<string>();
@@ -51,7 +54,9 @@ export default function FeedPage() {
     };
   }, []);
 
-  const hasPosts = posts.length > 0;
+  // A first page is loading (initial load, or the search/filter changed and the list reset).
+  const showLoader = useMinVisible(posts.length === 0 && loading, MIN_LOADER_MS) && !error;
+  const hasPosts = posts.length > 0 && !showLoader;
   const canLoadMore = hasPosts && !done && !error;
 
   useEffect(() => {
@@ -83,28 +88,20 @@ export default function FeedPage() {
 
       {error && <ErrorBanner message={error} onRetry={retry} />}
 
-      {!hasPosts && loading && (
-        <div
-          role="status"
-          aria-label="Loading posts"
-          className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3"
-        >
-          {Array.from({ length: 6 }, (_, i) => (
-            <div key={i} className={i === 0 ? 'sm:col-span-2 lg:row-span-2' : ''}>
-              <SkeletonCard featured={i === 0} />
-            </div>
-          ))}
-        </div>
-      )}
+      {showLoader && <FeedLoading />}
 
-      {!hasPosts && !loading && !error && (
+      {posts.length === 0 && !loading && !error && !showLoader && (
         <EmptyState
           filtered={sourceId !== undefined || date.range !== 'any'}
           search={q || undefined}
         />
       )}
 
-      {hasPosts && <FeedGrid groups={groups} now={now} />}
+      {hasPosts && (
+        <div className="fz-feed-enter">
+          <FeedGrid groups={groups} now={now} />
+        </div>
+      )}
 
       {canLoadMore && (
         <div ref={sentinel} className="flex justify-center pt-2">
