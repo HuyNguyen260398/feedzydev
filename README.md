@@ -12,6 +12,7 @@ notification (browser or installed PWA) when a crawl finds new posts.
 Live site: https://feedzydev-claude.nghuy.link
 
 Architecture and diagrams: [`docs/architecture.md`](docs/architecture.md).
+Tech stack overview: [`docs/tech-stack.md`](docs/tech-stack.md).
 
 Stack: Next.js static export, CloudFront + S3, API Gateway REST, Lambda
 (Node), DynamoDB, Cognito (Google federation), EventBridge Scheduler,
