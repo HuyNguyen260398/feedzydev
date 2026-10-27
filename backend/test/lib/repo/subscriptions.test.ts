@@ -43,8 +43,18 @@ describe('SubscriptionsRepo', () => {
         ':now': '2026-10-20T00:00:00.000Z',
       },
     });
-    expect(input.UpdateExpression).toContain('createdAt = if_not_exists(createdAt, :now)');
-    expect(input.UpdateExpression).toContain('updatedAt = :now');
+    expect(input.UpdateExpression).toContain('#createdAt = if_not_exists(#createdAt, :now)');
+    expect(input.UpdateExpression).toContain('#updatedAt = :now');
+  });
+
+  it('put aliases every attribute name, since `auth` is a DynamoDB reserved word', async () => {
+    ddb.on(UpdateCommand).resolves({ Attributes: {} });
+    await repo.put({ endpoint: ENDPOINT, p256dh: 'p', auth: 'a' });
+    const input = ddb.commandCalls(UpdateCommand)[0].args[0].input;
+    expect(input.ExpressionAttributeNames).toMatchObject({ '#auth': 'auth' });
+    // Any identifier without a # or : prefix is a raw attribute name.
+    const bare = input.UpdateExpression!.match(/(?<![#:\w])[A-Za-z_]\w*/g) ?? [];
+    expect(bare.filter((w) => w !== 'SET' && w !== 'if_not_exists')).toEqual([]);
   });
 
   it('exists projects only the id', async () => {

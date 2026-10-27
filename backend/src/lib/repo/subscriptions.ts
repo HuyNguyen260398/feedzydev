@@ -42,9 +42,17 @@ export class SubscriptionsRepo {
       new UpdateCommand({
         TableName: this.table,
         Key: { id: subscriptionId(s.endpoint) },
+        // `auth` is a DynamoDB reserved word, so every attribute goes through a #name.
         UpdateExpression:
-          'SET endpoint = :endpoint, p256dh = :p256dh, auth = :auth, updatedAt = :now, ' +
-          'createdAt = if_not_exists(createdAt, :now)',
+          'SET #endpoint = :endpoint, #p256dh = :p256dh, #auth = :auth, #updatedAt = :now, ' +
+          '#createdAt = if_not_exists(#createdAt, :now)',
+        ExpressionAttributeNames: {
+          '#endpoint': 'endpoint',
+          '#p256dh': 'p256dh',
+          '#auth': 'auth',
+          '#updatedAt': 'updatedAt',
+          '#createdAt': 'createdAt',
+        },
         ExpressionAttributeValues: {
           ':endpoint': s.endpoint,
           ':p256dh': s.p256dh,
