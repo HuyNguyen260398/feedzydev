@@ -1,8 +1,9 @@
 # feedzydev
 
-A personal morning feed of new DevOps tech blog posts. Every day at 07:00
-(Asia/Ho_Chi_Minh) a scheduled Lambda crawls the RSS/Atom feeds of sources the
-owner curates; the site shows the posts as scannable cards (thumbnail, title,
+A personal morning feed of new DevOps tech blog posts. A scheduled Lambda runs
+every hour (Asia/Ho_Chi_Minh) and crawls the RSS/Atom feeds of sources the owner
+curates at the crawl hours saved in settings (07:00 by default; other hours exit
+early); the site shows the posts as scannable cards (thumbnail, title,
 author, date, source) that link to the original article. The feed is public;
 only the owner (Google sign-in, single allowed email) can manage sources and
 trigger a crawl. Anyone can turn on the header bell to get a Web Push
@@ -11,6 +12,7 @@ notification (browser or installed PWA) when a crawl finds new posts.
 Live site: https://feedzydev-claude.nghuy.link
 
 Architecture and diagrams: [`docs/architecture.md`](docs/architecture.md).
+Tech stack overview: [`docs/tech-stack.md`](docs/tech-stack.md).
 
 Stack: Next.js static export, CloudFront + S3, API Gateway REST, Lambda
 (Node), DynamoDB, Cognito (Google federation), EventBridge Scheduler,
@@ -122,8 +124,8 @@ smoke-tests `/api/posts`. Re-run it any time with **Run workflow**
 HTTPS on the subdomain; the feed loads on desktop and mobile width; Google
 sign-in works for the owner and a different account is rejected; adding a
 source by homepage URL works; "Crawl now" yields posts with thumbnails; the
-scheduler's next run is 07:00 Asia/Ho_Chi_Minh; admin endpoints return 401
-without a token.
+scheduler runs hourly (Asia/Ho_Chi_Minh) and crawls at the saved crawl hours;
+admin endpoints return 401 without a token.
 
 ## Starter sources
 

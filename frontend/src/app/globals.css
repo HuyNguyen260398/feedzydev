@@ -117,9 +117,21 @@ body {
     visibility: hidden;
   }
 }
+/* In-feed loader for search/filter changes: fade in, and results fade in after it. */
+.fz-feed-loading,
+.fz-feed-enter {
+  animation: fz-fade-in 0.3s ease-out;
+}
+@keyframes fz-fade-in {
+  from {
+    opacity: 0;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   .fz-splash-cursor,
-  .fz-splash-bar {
+  .fz-splash-bar,
+  .fz-feed-loading,
+  .fz-feed-enter {
     animation: none;
   }
 }

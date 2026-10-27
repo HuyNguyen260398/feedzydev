@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import LoadingMark from '@/components/LoadingMark';
 
 // Keep the splash up at least this long after navigation start so it doesn't just flicker.
 const MIN_VISIBLE_MS = 500;
@@ -48,14 +49,7 @@ export default function SplashScreen() {
       }`}
       style={{ transitionDuration: `${FADE_MS}ms` }}
     >
-      <div aria-hidden="true" className="font-mono text-2xl font-semibold sm:text-3xl">
-        {'> feedzy'}
-        <span className="text-accent">dev</span>
-        <span className="fz-splash-cursor text-accent">_</span>
-      </div>
-      <div aria-hidden="true" className="h-1 w-40 overflow-hidden rounded-full bg-border">
-        <div className="fz-splash-bar h-full w-1/3 rounded-full bg-accent" />
-      </div>
+      <LoadingMark />
     </div>
   );
 }
