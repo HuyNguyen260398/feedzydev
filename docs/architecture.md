@@ -5,6 +5,10 @@ ACM certificate in us-east-1). The default behavior serves the Next.js static
 export from a private S3 bucket (OAC); `/api/*` forwards to API Gateway, so the
 frontend is same-origin with the API and needs no CORS.
 
+![AWS architecture](diagrams/aws-architecture.png)
+
+Source: [`diagrams/aws-architecture.drawio`](diagrams/aws-architecture.drawio) (open in draw.io).
+
 ## Services
 
 | Concern | Service | Role |
@@ -73,6 +77,11 @@ sequenceDiagram
 
 ### Scheduled crawl
 
+![Scheduled crawl and push notifications](diagrams/crawl-and-push.png)
+
+Source: [`diagrams/crawl-and-push.drawio`](diagrams/crawl-and-push.drawio). Covers this section and
+[Push notification](#push-notification).
+
 ```mermaid
 flowchart LR
     S[EventBridge Scheduler<br/>hourly, Asia/Ho_Chi_Minh] --> CR[Crawler Lambda]
@@ -111,6 +120,10 @@ capped at 1000 subscriptions, and push failures are logged (`push.summary`, `pus
 affecting the crawl.
 
 ## Deploy
+
+![CI/CD and deployment](diagrams/cicd-deploy.png)
+
+Source: [`diagrams/cicd-deploy.drawio`](diagrams/cicd-deploy.drawio).
 
 ```mermaid
 flowchart LR
