@@ -88,12 +88,12 @@ Everything runs serverless on AWS in `ap-southeast-1`, provisioned with Terrafor
 
 ## Automation
 
-GitHub Actions runs every gate on pull requests and deploys on each push to `feedzydev-claude`. It reaches AWS through OIDC roles, so the repo holds no long-lived AWS keys.
+GitHub Actions runs every gate on pull requests and deploys on each push to `main`. It reaches AWS through OIDC roles, so the repo holds no long-lived AWS keys.
 
 | Workflow     | Trigger                                                         | What it does                                                                                                                                                                                                                                                                      |
 | ------------ | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ci.yml`     | Pull request to `feedzydev-claude`, manual, or called by Deploy | Backend and frontend jobs: install (frozen lockfile), Prettier check, ESLint, typecheck, tests, build. Terraform job: `fmt -check`, `validate` for bootstrap and prod, then `terraform plan` with the read-only role when `infra/**` or `backend/**` changed (same-repo PRs only) |
-| `deploy.yml` | Push to `feedzydev-claude`, or manual                           | Runs `ci.yml` as its gate, then deploys with the deploy role; one deploy at a time (`concurrency` group, no cancel)                                                                                                                                                               |
+| `ci.yml`     | Pull request to `main`, manual, or called by Deploy             | Backend and frontend jobs: install (frozen lockfile), Prettier check, ESLint, typecheck, tests, build. Terraform job: `fmt -check`, `validate` for bootstrap and prod, then `terraform plan` with the read-only role when `infra/**` or `backend/**` changed (same-repo PRs only) |
+| `deploy.yml` | Push to `main`, or manual                                       | Runs `ci.yml` as its gate, then deploys with the deploy role; one deploy at a time (`concurrency` group, no cancel)                                                                                                                                                               |
 
 **Deploy steps:**
 

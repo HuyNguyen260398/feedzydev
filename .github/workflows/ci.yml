@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    branches: [feedzydev-claude]
+    branches: [main]
   workflow_call:
   workflow_dispatch:
 
