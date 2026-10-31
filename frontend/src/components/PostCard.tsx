@@ -23,6 +23,8 @@ export default function PostCard({
     >
       <Thumbnail
         src={post.thumbnailUrl}
+        postUrl={post.url}
+        sourceName={post.sourceName}
         alt=""
         className={featured ? 'w-full' : 'w-32 shrink-0 self-start sm:w-full'}
       />

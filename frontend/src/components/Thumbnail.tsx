@@ -1,15 +1,21 @@
 'use client';
 
 import { useState } from 'react';
+import SourceThumbnail from '@/components/SourceThumbnail';
 
-export const DEFAULT_THUMBNAIL = '/default-thumbnail.svg';
+const MEDIA_CLASS =
+  'h-full w-full object-cover transition-transform duration-300 ease-out group-hover:scale-[1.03]';
 
 export default function Thumbnail({
   src,
+  postUrl,
+  sourceName,
   alt,
   className = '',
 }: {
   src?: string;
+  postUrl: string;
+  sourceName: string;
   alt: string;
   className?: string;
 }) {
@@ -19,16 +25,20 @@ export default function Thumbnail({
 
   return (
     <div className={`relative aspect-video overflow-hidden bg-border ${className}`}>
-      {/* eslint-disable-next-line @next/next/no-img-element -- static export, remote feed images */}
-      <img
-        src={usable ? src : DEFAULT_THUMBNAIL}
-        alt={alt}
-        loading="lazy"
-        decoding="async"
-        referrerPolicy="no-referrer"
-        onError={usable ? () => setFailedSrc(src) : undefined}
-        className="h-full w-full object-cover transition-transform duration-300 ease-out group-hover:scale-[1.03]"
-      />
+      {usable ? (
+        /* eslint-disable-next-line @next/next/no-img-element -- static export, remote feed images */
+        <img
+          src={src}
+          alt={alt}
+          loading="lazy"
+          decoding="async"
+          referrerPolicy="no-referrer"
+          onError={() => setFailedSrc(src)}
+          className={MEDIA_CLASS}
+        />
+      ) : (
+        <SourceThumbnail sourceName={sourceName} postUrl={postUrl} className={MEDIA_CLASS} />
+      )}
     </div>
   );
 }

@@ -6,14 +6,7 @@ const STATIC = `fz-static-${VERSION}`; // content-hashed /_next/static: cache-fi
 const API = `fz-api-${VERSION}`; // public API reads: network-first, cached for offline
 const CACHES = [SHELL, STATIC, API];
 
-const PRECACHE = [
-  '/',
-  '/sources/',
-  '/manifest.json',
-  '/icons/icon-192.png',
-  '/icons/icon-512.png',
-  '/default-thumbnail.svg',
-];
+const PRECACHE = ['/', '/sources/', '/manifest.json', '/icons/icon-192.png', '/icons/icon-512.png'];
 const MAX_ENTRIES = { [STATIC]: 150, [API]: 60, [SHELL]: 60 };
 const NETWORK_TIMEOUT_MS = 6000;
 
