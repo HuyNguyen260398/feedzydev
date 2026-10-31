@@ -9,6 +9,8 @@ export interface FetchResult {
   url: string;
   contentType: string;
   body: string;
+  /** Cloudflare's `cf-mitigated` header, set when it answered with a bot challenge. */
+  cfMitigated?: string;
 }
 
 export type FetchText = (url: string, opts?: { timeoutMs?: number }) => Promise<FetchResult>;
@@ -54,11 +56,13 @@ export const fetchText: FetchText = async (url, opts) => {
       signal: AbortSignal.timeout(opts?.timeoutMs ?? 10000),
     });
     const body = await readBody(res);
+    const cfMitigated = res.headers.get('cf-mitigated');
     return {
       status: res.status,
       url: res.url || url,
       contentType: res.headers.get('content-type') ?? '',
       body,
+      ...(cfMitigated ? { cfMitigated } : {}),
     };
   } catch (err) {
     if (err instanceof FetchError) throw err;

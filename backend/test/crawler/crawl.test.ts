@@ -1,6 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { crawlAll, OG_FETCH_BUDGET, type CrawlDeps } from '../../src/crawler/crawl';
+import {
+  crawlAll,
+  OG_FETCH_BUDGET,
+  OG_RETRIES_PER_SOURCE,
+  OG_RETRY_BUDGET,
+  OG_RETRY_MAX_AGE_DAYS,
+  type CrawlDeps,
+} from '../../src/crawler/crawl';
 import { mapWithConcurrency } from '../../src/lib/pool';
 import { FetchError, type FetchText } from '../../src/lib/http';
 import { DEFAULT_SETTINGS } from '../../src/lib/settings';
@@ -21,19 +28,20 @@ const mkSource = (id: string, enabled = true): Source => ({
 
 function setup(
   sources: Source[],
-  fetchImpl: (url: string) => Promise<{ status: number; body: string }>,
+  fetchImpl: (url: string) => Promise<{ status: number; body: string; cfMitigated?: string }>,
   existing: string[] = [],
   putResult: (p: Post) => boolean = () => true,
   settings: Settings = { postsPerSource: 50, crawlHours: [7], retentionDays: 90 },
 ) {
   const saved: Post[] = [];
+  const updated: { id: string; url: string }[] = [];
   const recorded: { id: string; r: Record<string, unknown> }[] = [];
   const fetched: string[] = [];
   const purgedBefore: string[] = [];
   const fetchText: FetchText = async (url) => {
     fetched.push(url);
     const r = await fetchImpl(url);
-    return { status: r.status, url, contentType: 'text/xml', body: r.body };
+    return { url, contentType: 'text/xml', ...r };
   };
   const deps: CrawlDeps = {
     sources: {
@@ -44,11 +52,15 @@ function setup(
       },
     },
     posts: {
-      exists: async (id) => existing.includes(id),
+      find: async (id) =>
+        existing.includes(id) ? { thumbnailUrl: 'https://img.io/existing.png' } : undefined,
       putIfAbsent: async (p) => {
         const ok = putResult(p);
         if (ok) saved.push(p);
         return ok;
+      },
+      setThumbnail: async (id, url) => {
+        updated.push({ id, url });
       },
       deleteOlderThan: async (cutoff) => {
         purgedBefore.push(cutoff);
@@ -59,7 +71,7 @@ function setup(
     fetchText,
     now: () => NOW,
   };
-  return { deps, saved, recorded, fetched, purgedBefore };
+  return { deps, saved, updated, recorded, fetched, purgedBefore };
 }
 
 const rssOk = async () => ({ status: 200, body: feedXml });
@@ -88,6 +100,12 @@ describe('mapWithConcurrency', () => {
 });
 
 describe('crawl', () => {
+  let log: jest.SpyInstance;
+  beforeEach(() => {
+    log = jest.spyOn(console, 'log').mockImplementation(() => {});
+  });
+  afterEach(() => log.mockRestore());
+
   it('saves new posts and records ok', async () => {
     const { deps, saved, recorded } = setup([mkSource('a')], async (url) =>
       url.endsWith('/feed') ? { status: 200, body: feedXml } : { status: 404, body: '' },
@@ -127,7 +145,7 @@ describe('crawl', () => {
     expect((await crawlAllOk(g.deps, {}))[0].status).toBe('error');
   });
 
-  it('og:image fallback only for new thumbnail-less posts', async () => {
+  it('og:image fallback for new thumbnail-less posts, not posts that already have one', async () => {
     const feed = feedXml.replace(
       '<item><title>No date post',
       '<item><title>nt</title><link>https://blog.example.com/posts/nothumb</link><pubDate>Fri, 16 Oct 2026 10:00:00 GMT</pubDate></item><item><title>No date post',
@@ -179,6 +197,201 @@ describe('crawl', () => {
     const res = await crawlAllOk(deps, {});
     expect(res.map((r) => r.newCount)).toEqual(Array(7).fill(5));
     expect(fetched.filter((u) => u.startsWith('https://p.io/'))).toHaveLength(30);
+  });
+
+  describe('og:image page fetches', () => {
+    const POSTED = 'Fri, 16 Oct 2026 10:00:00 GMT';
+    const item = (id: string, url: string, pubDate = POSTED, extra = '') =>
+      `<item><title>${id}</title><link>${url}</link><pubDate>${pubDate}</pubDate>${extra}</item>`;
+    const rss = (items: string[]) =>
+      `<?xml version="1.0"?><rss version="2.0"><channel><title>x</title>${items.join('')}</channel></rss>`;
+    /** Feed of `n` thumbnail-less posts for a source, at https://p.io/<id>/<i>. */
+    const feedOf = (id: string, n: number) =>
+      rss(Array.from({ length: n }, (_, i) => item(`t${i}`, `https://p.io/${id}/${i}`)));
+    const isPage = (u: string) => u.startsWith('https://p.io/');
+    const logged = () => log.mock.calls.map(([line]) => JSON.parse(line as string));
+    /** Marks posts as already stored without a thumbnail. */
+    const stored = (t: ReturnType<typeof setup>, urls: string[]) => {
+      const ids = urls.map(postIdFor);
+      t.deps.posts.find = async (id) => (ids.includes(id) ? {} : undefined);
+    };
+    const OG = '<meta property="og:image" content="https://img.io/og.png">';
+
+    it('logs a failed page fetch with its status and cf-mitigated value', async () => {
+      const t = setup([mkSource('a')], async (url) =>
+        isPage(url)
+          ? { status: 403, body: 'Just a moment...', cfMitigated: 'challenge' }
+          : { status: 200, body: feedOf('a', 1) },
+      );
+      await crawlAllOk(t.deps, {});
+      expect(logged()).toContainEqual({
+        msg: 'crawl.og_failed',
+        sourceId: 'a',
+        url: 'https://p.io/a/0',
+        status: 403,
+        cfMitigated: 'challenge',
+      });
+      expect(t.saved).toHaveLength(1);
+    });
+
+    it('logs a page fetch that throws, and still saves the post', async () => {
+      const t = setup([mkSource('a')], async (url) => {
+        if (isPage(url)) throw new FetchError('TIMEOUT', 'slow');
+        return { status: 200, body: feedOf('a', 1) };
+      });
+      await crawlAllOk(t.deps, {});
+      expect(logged()).toContainEqual({
+        msg: 'crawl.og_failed',
+        sourceId: 'a',
+        url: 'https://p.io/a/0',
+        error: 'TIMEOUT: slow',
+      });
+      expect(t.saved).toHaveLength(1);
+    });
+
+    it('does not log a page that loads without an og:image', async () => {
+      const t = setup([mkSource('a')], async (url) =>
+        isPage(url)
+          ? { status: 200, body: '<html></html>' }
+          : { status: 200, body: feedOf('a', 1) },
+      );
+      await crawlAllOk(t.deps, {});
+      expect(logged()).toEqual([]);
+    });
+
+    it('stops fetching pages for a source after its first challenge', async () => {
+      const t = setup([mkSource('a'), mkSource('b')], async (url) => {
+        if (url === 'https://a.io/feed') return { status: 200, body: feedOf('a', 4) };
+        if (url === 'https://b.io/feed') return { status: 200, body: feedOf('b', 4) };
+        return url.includes('/a/')
+          ? { status: 403, body: '', cfMitigated: 'challenge' }
+          : { status: 200, body: OG };
+      });
+      await crawlAllOk(t.deps, {});
+      expect(t.fetched.filter((u) => u.includes('p.io/a/'))).toHaveLength(1);
+      expect(t.fetched.filter((u) => u.includes('p.io/b/'))).toHaveLength(4);
+      expect(t.saved).toHaveLength(8);
+    });
+
+    it('keeps fetching pages after an ordinary failure', async () => {
+      const t = setup([mkSource('a')], async (url) =>
+        isPage(url) ? { status: 404, body: '' } : { status: 200, body: feedOf('a', 3) },
+      );
+      await crawlAllOk(t.deps, {});
+      expect(t.fetched.filter(isPage)).toHaveLength(3);
+    });
+
+    it('backfills a stored post from its page, without counting it as new', async () => {
+      const t = setup([mkSource('a')], async (url) =>
+        isPage(url) ? { status: 200, body: OG } : { status: 200, body: feedOf('a', 1) },
+      );
+      stored(t, ['https://p.io/a/0']);
+      const [r] = await crawlAllOk(t.deps, {});
+      expect(t.updated).toEqual([
+        { id: postIdFor('https://p.io/a/0'), url: 'https://img.io/og.png' },
+      ]);
+      expect(t.saved).toEqual([]);
+      expect(r.newCount).toBe(0);
+      expect(r).not.toHaveProperty('newest');
+    });
+
+    it('backfills from the feed without fetching the page', async () => {
+      const feed = rss([
+        item(
+          't',
+          'https://p.io/a/0',
+          POSTED,
+          '<enclosure url="https://img.io/f.png" type="image/png"/>',
+        ),
+      ]);
+      const t = setup([mkSource('a')], async () => ({ status: 200, body: feed }));
+      stored(t, ['https://p.io/a/0']);
+      await crawlAllOk(t.deps, {});
+      expect(t.updated).toEqual([
+        { id: postIdFor('https://p.io/a/0'), url: 'https://img.io/f.png' },
+      ]);
+      expect(t.fetched.filter(isPage)).toEqual([]);
+    });
+
+    it('leaves a stored post alone when its page still has no image', async () => {
+      const t = setup([mkSource('a')], async (url) =>
+        isPage(url)
+          ? { status: 200, body: '<html></html>' }
+          : { status: 200, body: feedOf('a', 1) },
+      );
+      stored(t, ['https://p.io/a/0']);
+      await crawlAllOk(t.deps, {});
+      expect(t.updated).toEqual([]);
+    });
+
+    it('does not refetch pages of stored posts past the retry window', async () => {
+      const age = (days: number) => new Date(NOW.getTime() - days * 86_400_000).toUTCString();
+      const feed = rss([
+        item('in', 'https://p.io/a/in', age(OG_RETRY_MAX_AGE_DAYS - 1)),
+        item('out', 'https://p.io/a/out', age(OG_RETRY_MAX_AGE_DAYS + 1)),
+      ]);
+      const t = setup([mkSource('a')], async (url) =>
+        isPage(url) ? { status: 200, body: OG } : { status: 200, body: feed },
+      );
+      stored(t, ['https://p.io/a/in', 'https://p.io/a/out']);
+      await crawlAllOk(t.deps, {});
+      expect(t.fetched.filter(isPage)).toEqual(['https://p.io/a/in']);
+    });
+
+    it('caps page retries per source', async () => {
+      const n = OG_RETRIES_PER_SOURCE + 2;
+      const t = setup([mkSource('a')], async (url) =>
+        isPage(url)
+          ? { status: 200, body: '<html></html>' }
+          : { status: 200, body: feedOf('a', n) },
+      );
+      stored(
+        t,
+        Array.from({ length: n }, (_, i) => `https://p.io/a/${i}`),
+      );
+      await crawlAllOk(t.deps, {});
+      expect(t.fetched.filter(isPage)).toHaveLength(OG_RETRIES_PER_SOURCE);
+    });
+
+    it('caps page retries per run, leaving the rest of the budget for new posts', async () => {
+      // Each source has more stored posts than it may retry, then 6 new posts.
+      const perSource = OG_RETRIES_PER_SOURCE + 1;
+      const sources = Array.from({ length: 5 }, (_, i) => mkSource(`s${i}`));
+      const urlOf = (id: string, i: number) => `https://p.io/${id}/${i}`;
+      const feedFor = (id: string) => {
+        const at = (i: number) => new Date(Date.parse(POSTED) - i * 60_000).toUTCString();
+        return rss(
+          Array.from({ length: perSource + 6 }, (_, i) => item(`t${i}`, urlOf(id, i), at(i))),
+        );
+      };
+      const retried = sources.flatMap((s) =>
+        Array.from({ length: perSource }, (_, i) => urlOf(s.sourceId, i)),
+      );
+      const t = setup(sources, async (url) => {
+        const m = /^https:\/\/(s\d)\.io\/feed$/.exec(url);
+        return m ? { status: 200, body: feedFor(m[1]) } : { status: 200, body: '<html></html>' };
+      });
+      stored(t, retried);
+      await crawlAllOk(t.deps, {});
+      const pages = t.fetched.filter(isPage);
+      expect(pages.filter((u) => retried.includes(u))).toHaveLength(OG_RETRY_BUDGET);
+      expect(pages).toHaveLength(OG_FETCH_BUDGET);
+    });
+
+    it('logs a failed backfill and still records the crawl as ok', async () => {
+      const t = setup([mkSource('a')], async (url) =>
+        isPage(url) ? { status: 200, body: OG } : { status: 200, body: feedOf('a', 1) },
+      );
+      stored(t, ['https://p.io/a/0']);
+      t.deps.posts.setThumbnail = async () => {
+        throw new Error('AccessDenied');
+      };
+      const err = jest.spyOn(console, 'error').mockImplementation(() => {});
+      const [r] = await crawlAllOk(t.deps, {});
+      expect(r.status).toBe('ok');
+      expect(err).toHaveBeenCalledWith(expect.stringContaining('AccessDenied'));
+      err.mockRestore();
+    });
   });
 
   it('skips disabled; sourceId crawls only that one', async () => {

@@ -41,6 +41,20 @@ describe('fetchText', () => {
     await expect(fetchText('https://start/')).resolves.toMatchObject({ status: 404 });
   });
 
+  it('surfaces the cf-mitigated header, and omits it when absent', async () => {
+    jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValueOnce(
+        new Response('Just a moment...', { status: 403, headers: { 'cf-mitigated': 'challenge' } }),
+      )
+      .mockResolvedValueOnce(new Response('x'));
+    await expect(fetchText('https://start/')).resolves.toMatchObject({
+      status: 403,
+      cfMitigated: 'challenge',
+    });
+    await expect(fetchText('https://start/')).resolves.not.toHaveProperty('cfMitigated');
+  });
+
   it('throws TOO_LARGE past MAX_BYTES', async () => {
     const chunk = new Uint8Array(1024 * 1024);
     let sent = 0;

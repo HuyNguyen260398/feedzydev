@@ -75,6 +75,7 @@ but would become a hot partition if the feed grew by orders of magnitude.
 | List one source's posts | API | Query `bySource`, `sourceId = :s`, descending |
 | Search titles / source names | API | Query the same index page by page and filter in Lambda (no substring index; scan is capped) |
 | Insert a new post if not seen | Crawler | Conditional `PutItem` on `postId` |
+| Backfill a missing thumbnail | Crawler | `UpdateItem` conditional on `postId` existing and `thumbnailUrl` not |
 | Purge expired posts | Crawler | Query `byPublished` with `publishedAt < cutoff`, then `BatchWriteItem` deletes |
 | Delete a source and its posts | API | `DeleteItem` on `sources`; Query `bySource` + `BatchWriteItem` on `posts` |
 | List sources / enabled sources | API, Crawler | `Scan` `sources` (small table) |
