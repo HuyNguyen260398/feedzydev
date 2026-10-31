@@ -21,7 +21,7 @@ export const metadata: Metadata = {
   applicationName: 'feedzydev',
   manifest: '/manifest.json',
   appleWebApp: { capable: true, title: 'feedzydev', statusBarStyle: 'black-translucent' },
-  icons: { apple: '/icons/apple-touch-icon.png' },
+  icons: { icon: '/icon.svg', apple: '/icons/apple-touch-icon.png' },
   formatDetection: { telephone: false },
 };
 
