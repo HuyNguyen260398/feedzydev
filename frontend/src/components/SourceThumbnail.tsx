@@ -49,8 +49,8 @@ export default function SourceThumbnail({
     >
       <defs>
         <linearGradient id={`${id}bg`} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor={mix(accent, '#0b1020', 0.18)} />
-          <stop offset="1" stopColor="#0b1020" />
+          <stop offset="0" stopColor={mix(accent, '#000000', 0.18)} />
+          <stop offset="1" stopColor="#000000" />
         </linearGradient>
         <radialGradient id={`${id}glow`} cx="0.5" cy="0.5" r="0.5">
           <stop offset="0" stopColor={accent} stopOpacity="0.32" />
@@ -86,12 +86,12 @@ export default function SourceThumbnail({
           strokeOpacity="0.45"
           strokeWidth="3"
         />
-        <path d="M0 22a22 22 0 0 1 22-22h656a22 22 0 0 1 22 22v34H0z" fill="#1e293b" />
+        <path d="M0 22a22 22 0 0 1 22-22h656a22 22 0 0 1 22 22v34H0z" fill="#262626" />
         <circle cx="36" cy="28" r="9" fill="#f87171" />
         <circle cx="66" cy="28" r="9" fill="#fbbf24" />
         <circle cx="96" cy="28" r="9" fill="#34d399" />
         <g className="font-mono" fontWeight="700">
-          <text x="350" y="185" textAnchor="middle" fontSize={titleFontSize(label)} fill="#e2e8f0">
+          <text x="350" y="185" textAnchor="middle" fontSize={titleFontSize(label)} fill="#e5e5e5">
             {'> '}
             <tspan fill={accent}>{word}</tspan>_
           </text>
@@ -101,7 +101,7 @@ export default function SourceThumbnail({
             textAnchor="middle"
             fontSize="26"
             fontWeight="500"
-            fill="#94a3b8"
+            fill="#a3a3a3"
             letterSpacing="3"
           >
             devops · cloud · sre
