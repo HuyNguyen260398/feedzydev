@@ -9,7 +9,7 @@ only the owner (Google sign-in, single allowed email) can manage sources and
 trigger a crawl. Anyone can turn on the header bell to get a Web Push
 notification (browser or installed PWA) when a crawl finds new posts.
 
-Live site: https://feedzydev-claude.nghuy.link
+Live site: https://feedzydev.nghuy.link
 
 Architecture and diagrams: [`docs/architecture.md`](docs/architecture.md).
 Tech stack overview: [`docs/tech-stack.md`](docs/tech-stack.md).
@@ -23,7 +23,7 @@ Terraform, GitHub Actions with OIDC (no long-lived AWS keys).
 
 ## Live
 
-https://feedzydev-claude.nghuy.link — live since 2026-10-18.
+https://feedzydev.nghuy.link — live since 2026-10-18.
 
 - Verified: edge and API checks, owner Google sign-in, non-owner sign-in rejected, daily crawl schedule (07:00 `Asia/Ho_Chi_Minh`), first crawl (`totalNew: 100`).
 - Discovery on `https://aws.amazon.com/blogs/` returns one feed, AWS "Recent Announcements" (`https://aws.amazon.com/about-aws/whats-new/recent/feed/`): the page advertises no blog feed of its own. For blog posts, add the per-blog feeds (e.g. `https://aws.amazon.com/blogs/devops/feed/`).
@@ -69,7 +69,7 @@ Node + pnpm, and a Route 53 hosted zone for `nghuy.link`.
 
 Before applying, confirm the GitHub OIDC provider already exists in the account
 (`aws iam list-open-id-connect-providers`) and that no Route 53 record already
-uses `feedzydev-claude.nghuy.link`.
+uses `feedzydev.nghuy.link`.
 
 ```bash
 cd infra/bootstrap

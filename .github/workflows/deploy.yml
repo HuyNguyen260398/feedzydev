@@ -99,4 +99,4 @@ jobs:
         run: aws cloudfront create-invalidation --distribution-id "${{ steps.tf.outputs.dist_id }}" --paths "/*"
 
       - name: Smoke test
-        run: curl -fsS --retry 5 --retry-delay 10 --retry-all-errors "https://feedzydev-claude.nghuy.link/api/posts?limit=1"
+        run: curl -fsS --retry 5 --retry-delay 10 --retry-all-errors "https://feedzydev.nghuy.link/api/posts?limit=1"

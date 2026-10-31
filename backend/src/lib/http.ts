@@ -1,4 +1,4 @@
-export const USER_AGENT = 'feedzydev/1.0 (+https://feedzydev-claude.nghuy.link)';
+export const USER_AGENT = 'feedzydev/1.0 (+https://feedzydev.nghuy.link)';
 export const MAX_BYTES = 5 * 1024 * 1024;
 
 const ACCEPT =

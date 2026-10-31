@@ -71,7 +71,7 @@ Everything runs serverless on AWS in `ap-southeast-1`, provisioned with Terrafor
 
 | Concern         | AWS service                           | Details                                                                                                                                                          |
 | --------------- | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Edge and domain | CloudFront, ACM (us-east-1), Route 53 | `feedzydev-claude.nghuy.link`; `/api/*` goes to API Gateway, everything else to S3; a CloudFront Function rewrites paths for the static export; `PriceClass_200` |
+| Edge and domain | CloudFront, ACM (us-east-1), Route 53 | `feedzydev.nghuy.link`; `/api/*` goes to API Gateway, everything else to S3; a CloudFront Function rewrites paths for the static export; `PriceClass_200`        |
 | Static hosting  | S3 (private, Origin Access Control)   | Hashed assets cached 1 year (immutable), HTML `no-cache`                                                                                                         |
 | API             | API Gateway REST                      | Public GETs; writes behind a Cognito authorizer; throttled at 10 req/s, burst 20                                                                                 |
 | Compute         | Lambda (Node.js 24, arm64)            | API, crawler, Cognito pre-sign-up                                                                                                                                |
