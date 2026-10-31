@@ -25,7 +25,7 @@ variable "github_sub_prefix" {
 variable "deploy_branch" {
   type        = string
   description = "Branch allowed to assume the deploy role."
-  default     = "feedzydev-claude"
+  default     = "main"
 }
 
 variable "name_prefix" {

@@ -54,7 +54,7 @@ terraform fmt -check -recursive infra
 ```
 
 CI (`.github/workflows/ci.yml`) runs the same gates on pull requests to
-`feedzydev-claude`, validates Terraform, and (when `infra/**` or `backend/**`
+`main`, validates Terraform, and (when `infra/**` or `backend/**`
 changed) runs `terraform plan` with the read-only OIDC role.
 
 ## Setup runbook
@@ -111,7 +111,7 @@ gh secret set VAPID_PRIVATE_KEY    # paste when prompted
 ### 4. Push to deploy
 
 ```bash
-git push -u origin feedzydev-claude
+git push -u origin main
 ```
 
 The Deploy workflow runs the CI gates, then applies Terraform, builds the

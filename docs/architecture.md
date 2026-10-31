@@ -188,7 +188,7 @@ Source: [`diagrams/cicd-deploy.drawio`](diagrams/cicd-deploy.drawio).
 ```mermaid
 flowchart LR
     PR[Pull request] --> CI[ci.yml<br/>format, lint, typecheck, test, build,<br/>terraform fmt/validate/plan]
-    Push[Push to feedzydev-claude] --> G[gates: ci.yml]
+    Push[Push to main] --> G[gates: ci.yml]
     G --> D[deploy job<br/>OIDC deploy role]
     D --> B[Build backend]
     B --> TF[terraform apply]
@@ -218,7 +218,7 @@ Source: [`diagrams/security-iam.drawio`](diagrams/security-iam.drawio).
   tables and actions it uses (see `infra/envs/prod/main.tf`). The scheduler can only invoke the crawler.
 - **No long-lived AWS keys in CI.** GitHub Actions assumes roles via OIDC. The plan role
   (read-only + state read) trusts PRs and the deploy branch. The deploy role trusts only
-  `refs/heads/feedzydev-claude` and can create roles only if they carry the
+  `refs/heads/main` and can create roles only if they carry the
   `feedzydev-claude-boundary` permissions boundary.
 - **Secrets.** The Google client secret and the VAPID private key are GitHub secrets passed to
   Terraform. They end up in the Cognito IdP config and the crawler's environment, and so also in

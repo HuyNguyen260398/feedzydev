@@ -1,6 +1,6 @@
 # Go-live runbook — feedzydev-claude
 
-First deployment of https://feedzydev-claude.nghuy.link into AWS account `010382427026` (`ap-southeast-1`), deployed by GitHub Actions from branch `feedzydev-claude` of `HuyNguyen260398/feedzydev`.
+First deployment of https://feedzydev-claude.nghuy.link into AWS account `010382427026` (`ap-southeast-1`), deployed by GitHub Actions from branch `main` of `HuyNguyen260398/feedzydev`.
 
 **How to use this:** work top to bottom. Each step says **who** runs it, the command, and what "done" looks like. Don't start a step until the previous checkpoint passes. Commands are written to run from the repo root (`/Users/huyng/ws/feedzydev-claude`); in Claude Code, prefix with `!` so the output lands in the conversation.
 
@@ -99,7 +99,7 @@ gh secret list   -R HuyNguyen260398/feedzydev
 The remote is empty, so this push creates the repo's first (default) branch and triggers **Deploy** (`deploy.yml`): quality gates → `terraform apply` (≈51 resources) → frontend build → S3 sync → CloudFront invalidation → smoke test.
 
 ```bash
-git push -u origin feedzydev-claude
+git push -u origin main
 ```
 
 Watch it:
@@ -115,7 +115,7 @@ gh run watch -R HuyNguyen260398/feedzydev --exit-status
 
 | Symptom                                                   | Likely cause                                                             | Fix                                                                                 |
 | --------------------------------------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
-| `Not authorized to perform sts:AssumeRoleWithWebIdentity` | Trust `sub` mismatch or secret typo                                      | Re-check step 3 ARNs; confirm push was to `feedzydev-claude`                        |
+| `Not authorized to perform sts:AssumeRoleWithWebIdentity` | Trust `sub` mismatch or secret typo                                      | Re-check step 3 ARNs; confirm push was to `main`                                    |
 | `AccessDenied ... iam:CreateRole` / `PutRolePolicy`       | Role missing permissions boundary, or name not `feedzydev-claude-prod-*` | Code fix in `infra/modules/*`, commit, push                                         |
 | `AccessDenied` on another service                         | Deploy policy gap                                                        | Widen `infra/bootstrap/main.tf` deploy policy, re-run step 1 apply, re-run workflow |
 | Cognito `InvalidParameterException` on Google IdP         | Wrong Google client ID/secret                                            | Fix secrets (step 3), `gh run rerun --failed`                                       |
@@ -221,7 +221,7 @@ invalidates every existing subscription, so don't rotate unless it leaks.
 
 | Situation                   | Action                                                                                                                   |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Bad app deploy (UI/API bug) | `git revert <sha>` on `feedzydev-claude`, push → redeploys previous code                                                 |
+| Bad app deploy (UI/API bug) | `git revert <sha>` on `main`, push → redeploys previous code                                                             |
 | Need the site offline fast  | `aws cloudfront get-distribution-config` → set `Enabled=false` via `update-distribution` (or disable in console)         |
 | Remove everything           | Follow README → **Tear down** (empties site bucket, disables Cognito deletion protection, destroys prod, then bootstrap) |
 
