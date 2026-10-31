@@ -3,7 +3,7 @@ export interface SourceTheme {
   accent: string;
 }
 
-export const WINDOW_FILL = '#121a33';
+export const WINDOW_FILL = '#111111';
 
 interface Brand extends SourceTheme {
   /** Matched against the post's host, including subdomains. */
