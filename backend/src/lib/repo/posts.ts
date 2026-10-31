@@ -5,6 +5,7 @@ import {
   GetCommand,
   PutCommand,
   QueryCommand,
+  UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
 import { decodeCursor, encodeCursor } from '../cursor';
 import { matchesSearch } from '../search';
@@ -22,11 +23,34 @@ export class PostsRepo {
     private readonly table: string,
   ) {}
 
-  async exists(postId: string): Promise<boolean> {
+  /** A stored post's thumbnail state, or undefined when the post is not stored. */
+  async find(postId: string): Promise<Pick<Post, 'thumbnailUrl'> | undefined> {
     const res = await this.doc.send(
-      new GetCommand({ TableName: this.table, Key: { postId }, ProjectionExpression: 'postId' }),
+      new GetCommand({
+        TableName: this.table,
+        Key: { postId },
+        ProjectionExpression: 'postId, thumbnailUrl',
+      }),
     );
-    return res.Item !== undefined;
+    if (!res.Item) return undefined;
+    return res.Item.thumbnailUrl ? { thumbnailUrl: res.Item.thumbnailUrl as string } : {};
+  }
+
+  /** Fills in a missing thumbnail; a post purged or filled in meanwhile is left as it is. */
+  async setThumbnail(postId: string, thumbnailUrl: string): Promise<void> {
+    try {
+      await this.doc.send(
+        new UpdateCommand({
+          TableName: this.table,
+          Key: { postId },
+          UpdateExpression: 'SET thumbnailUrl = :u',
+          ConditionExpression: 'attribute_exists(postId) AND attribute_not_exists(thumbnailUrl)',
+          ExpressionAttributeValues: { ':u': thumbnailUrl },
+        }),
+      );
+    } catch (e) {
+      if (!(e instanceof ConditionalCheckFailedException)) throw e;
+    }
   }
 
   async putIfAbsent(post: Post): Promise<boolean> {

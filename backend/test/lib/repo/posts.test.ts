@@ -5,6 +5,7 @@ import {
   GetCommand,
   PutCommand,
   QueryCommand,
+  UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { decodeCursor } from '../../../src/lib/cursor';
@@ -28,13 +29,44 @@ const post: Post = {
 beforeEach(() => ddb.reset());
 
 describe('PostsRepo', () => {
-  it('exists reflects Get result', async () => {
+  it('find returns only the stored thumbnail state, or undefined when absent', async () => {
     ddb
       .on(GetCommand)
-      .resolvesOnce({ Item: { postId: 'p1' } })
+      .resolvesOnce({ Item: { postId: 'p1', thumbnailUrl: 'https://img.io/a.png' } })
+      .resolvesOnce({ Item: { postId: 'p2' } })
       .resolvesOnce({});
-    expect(await repo.exists('p1')).toBe(true);
-    expect(await repo.exists('p2')).toBe(false);
+    expect(await repo.find('p1')).toEqual({ thumbnailUrl: 'https://img.io/a.png' });
+    expect(await repo.find('p2')).toEqual({});
+    expect(await repo.find('p3')).toBeUndefined();
+    expect(ddb.commandCalls(GetCommand)[0].args[0].input).toMatchObject({
+      TableName: 'posts',
+      Key: { postId: 'p1' },
+      ProjectionExpression: 'postId, thumbnailUrl',
+    });
+  });
+
+  it('setThumbnail only fills in a missing thumbnail on a post that still exists', async () => {
+    ddb.on(UpdateCommand).resolves({});
+    await repo.setThumbnail('p1', 'https://img.io/a.png');
+    expect(ddb.commandCalls(UpdateCommand)[0].args[0].input).toMatchObject({
+      TableName: 'posts',
+      Key: { postId: 'p1' },
+      UpdateExpression: 'SET thumbnailUrl = :u',
+      ConditionExpression: 'attribute_exists(postId) AND attribute_not_exists(thumbnailUrl)',
+      ExpressionAttributeValues: { ':u': 'https://img.io/a.png' },
+    });
+  });
+
+  it('setThumbnail ignores a post that was purged or already has a thumbnail', async () => {
+    ddb
+      .on(UpdateCommand)
+      .rejects(new ConditionalCheckFailedException({ message: 'x', $metadata: {} }));
+    await expect(repo.setThumbnail('p1', 'https://img.io/a.png')).resolves.toBeUndefined();
+  });
+
+  it('setThumbnail rethrows other errors', async () => {
+    ddb.on(UpdateCommand).rejects(new Error('boom'));
+    await expect(repo.setThumbnail('p1', 'https://img.io/a.png')).rejects.toThrow('boom');
   });
 
   it('putIfAbsent sends conditional put', async () => {
