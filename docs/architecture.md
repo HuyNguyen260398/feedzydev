@@ -1,6 +1,6 @@
 # Architecture
 
-CloudFront is the single entry point (custom domain `feedzydev-claude.nghuy.link`,
+CloudFront is the single entry point (custom domain `feedzydev.nghuy.link`,
 ACM certificate in us-east-1). The default behavior serves the Next.js static
 export from a private S3 bucket (OAC); `/api/*` forwards to API Gateway, so the
 frontend is same-origin with the API and needs no CORS.

@@ -1,6 +1,6 @@
 # Go-live runbook — feedzydev-claude
 
-First deployment of https://feedzydev-claude.nghuy.link into AWS account `010382427026` (`ap-southeast-1`), deployed by GitHub Actions from branch `main` of `HuyNguyen260398/feedzydev`.
+First deployment of https://feedzydev.nghuy.link into AWS account `010382427026` (`ap-southeast-1`), deployed by GitHub Actions from branch `main` of `HuyNguyen260398/feedzydev`.
 
 **How to use this:** work top to bottom. Each step says **who** runs it, the command, and what "done" looks like. Don't start a step until the previous checkpoint passes. Commands are written to run from the repo root (`/Users/huyng/ws/feedzydev-claude`); in Claude Code, prefix with `!` so the output lands in the conversation.
 
@@ -131,18 +131,18 @@ A failed apply is safe to re-run — Terraform resumes from state.
 ### 5a. Edge and API — Claude
 
 ```bash
-curl -sI https://feedzydev-claude.nghuy.link/ | head -5                                  # 200, x-cache header
-curl -s  https://feedzydev-claude.nghuy.link/sources | grep -io 'sources' | head -1      # rewrite works
-curl -s  https://feedzydev-claude.nghuy.link/api/posts                                   # {"items":[]}
-curl -s  -o /dev/null -w '%{http_code}\n' -X POST https://feedzydev-claude.nghuy.link/api/admin/crawl   # 401
-curl -s  -o /dev/null -w '%{http_code}\n' https://feedzydev-claude.nghuy.link/api/admin/sources         # 401
+curl -sI https://feedzydev.nghuy.link/ | head -5                                         # 200, x-cache header
+curl -s  https://feedzydev.nghuy.link/sources | grep -io 'sources' | head -1             # rewrite works
+curl -s  https://feedzydev.nghuy.link/api/posts                                          # {"items":[]}
+curl -s  -o /dev/null -w '%{http_code}\n' -X POST https://feedzydev.nghuy.link/api/admin/crawl          # 401
+curl -s  -o /dev/null -w '%{http_code}\n' https://feedzydev.nghuy.link/api/admin/sources                # 401
 aws scheduler get-schedule --name feedzydev-claude-prod-daily-crawl --region ap-southeast-1 \
   --query '[ScheduleExpression,ScheduleExpressionTimezone,State]'                        # cron(0 7 * * ? *), Asia/Ho_Chi_Minh, ENABLED
 ```
 
 ### 5b. Owner sign-in — Owner
 
-1. Open https://feedzydev-claude.nghuy.link/sources/ → **Sign in with Google** → choose `huynguyen260398@gmail.com`.
+1. Open https://feedzydev.nghuy.link/sources/ → **Sign in with Google** → choose `huynguyen260398@gmail.com`.
 2. **Done when:** you land back on `/sources/` showing your email, "Add source", "Crawl now" and an (empty) sources list — **no "Request failed (401)"**. That proves the ID token reaches the API on GETs through CloudFront.
 
 ### 5c. Non-owner is rejected — Owner
@@ -164,7 +164,7 @@ In a private window, try signing in with a different Google account.
    - `https://www.docker.com/blog/` (homepage — exercises discovery)
    - `https://grafana.com/blog/index.xml`
 3. Each add triggers a crawl of that source; also click **Crawl now** once.
-4. Wait ~60 s, open https://feedzydev-claude.nghuy.link/.
+4. Wait ~60 s, open https://feedzydev.nghuy.link/.
 
 **Done when:** posts from the last 14 days appear, newest as the featured card, with thumbnails (or branded placeholders), author, time and source chip; clicking a card opens the original post in a new tab; each source row shows `ok · N new`.
 
@@ -225,4 +225,4 @@ invalidates every existing subscription, so don't rotate unless it leaks.
 | Need the site offline fast  | `aws cloudfront get-distribution-config` → set `Enabled=false` via `update-distribution` (or disable in console)         |
 | Remove everything           | Follow README → **Tear down** (empties site bucket, disables Cognito deletion protection, destroys prod, then bootstrap) |
 
-Nothing here touches the other build (`feedzydev.nghuy.link`, `/Users/huyng/ws/feedzydev`) — all resources are prefixed `feedzydev-claude`.
+Nothing here touches the other build (`/Users/huyng/ws/feedzydev`) — all resources are prefixed `feedzydev-claude`.

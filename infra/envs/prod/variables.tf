@@ -10,7 +10,7 @@ variable "name_prefix" {
 
 variable "domain_name" {
   type    = string
-  default = "feedzydev-claude.nghuy.link"
+  default = "feedzydev.nghuy.link"
 }
 
 variable "hosted_zone_name" {
