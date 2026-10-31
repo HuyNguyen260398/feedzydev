@@ -1,51 +1,86 @@
+<div align="center">
+
+<img src="frontend/public/icons/icon-192.png" alt="feedzydev logo" width="96" />
+
 # feedzydev
 
-A personal morning feed of new DevOps tech blog posts. A scheduled Lambda runs
-every hour (Asia/Ho_Chi_Minh) and crawls the RSS/Atom feeds of sources the owner
-curates at the crawl hours saved in settings (07:00 by default; other hours exit
-early); the site shows the posts as scannable cards (thumbnail, title,
-author, date, source) that link to the original article. The feed is public;
-only the owner (Google sign-in, single allowed email) can manage sources and
-trigger a crawl. Anyone can turn on the header bell to get a Web Push
-notification (browser or installed PWA) when a crawl finds new posts.
+**A personal morning feed of new DevOps blog posts, served from a serverless AWS stack.**
 
-Live site: https://feedzydev.nghuy.link
+[![Deploy](https://github.com/HuyNguyen260398/feedzydev/actions/workflows/deploy.yml/badge.svg)](https://github.com/HuyNguyen260398/feedzydev/actions/workflows/deploy.yml)
+![Node.js 24](https://img.shields.io/badge/Node.js-24-5FA04E?logo=nodedotjs&logoColor=white)
+![Next.js 15](https://img.shields.io/badge/Next.js-15-000000?logo=nextdotjs&logoColor=white)
+![Terraform](https://img.shields.io/badge/Terraform-1.15-844FBA?logo=terraform&logoColor=white)
 
-Architecture and diagrams: [`docs/architecture.md`](docs/architecture.md).
-Tech stack overview: [`docs/tech-stack.md`](docs/tech-stack.md).
+[Live site](https://feedzydev.nghuy.link) • [Features](#features) • [How it works](#how-it-works) • [Getting started](#getting-started) • [Deploy your own](#deploy-your-own) • [Documentation](#documentation)
 
-Stack: Next.js static export, CloudFront + S3, API Gateway REST, Lambda
-(Node), DynamoDB, Cognito (Google federation), EventBridge Scheduler,
-Terraform, GitHub Actions with OIDC (no long-lived AWS keys).
+![The feedzydev feed in dark mode, showing sample posts as cards](docs/images/feed.png)
 
-> Setting this up creates real AWS resources. Usage-based pricing keeps idle
-> cost near zero, but see [Tear down](#tear-down) when you are done.
+<sub>Feed page running in mock mode, with sample data.</sub>
 
-## Live
+</div>
 
-https://feedzydev.nghuy.link — live since 2026-10-18.
+## Overview
 
-- Verified: edge and API checks, owner Google sign-in, non-owner sign-in rejected, daily crawl schedule (07:00 `Asia/Ho_Chi_Minh`), first crawl (`totalNew: 100`).
-- Discovery on `https://aws.amazon.com/blogs/` returns one feed, AWS "Recent Announcements" (`https://aws.amazon.com/about-aws/whats-new/recent/feed/`): the page advertises no blog feed of its own. For blog posts, add the per-blog feeds (e.g. `https://aws.amazon.com/blogs/devops/feed/`).
-- The repository uses GitHub's immutable OIDC subjects (`repo:owner@id/name@id:...`); the bootstrap trust policy matches that via `github_sub_prefix`.
+feedzydev crawls the RSS and Atom feeds of a hand-picked list of sources and shows new posts as scannable cards that link to the original articles. The feed is public. Only the owner can manage sources and trigger a crawl.
 
-## Local development
+## Features
 
-Packages are separate (no root `package.json`); run commands per package.
-Node version is in `.nvmrc`; pnpm version is pinned by each `packageManager` field.
+- **Curated sources:** paste a homepage or a feed URL, and feed discovery finds the feed.
+- **Scheduled crawls:** choose the crawl hours in the UI (07:00 `Asia/Ho_Chi_Minh` by default), or click **Crawl now**.
+- **Scannable cards:** each card shows a thumbnail, title, author, date and source. Posts without an image get a thumbnail drawn in a per-source theme.
+- **Search and filters:** search titles and sources, filter by source or date, and scroll through results without paging.
+- **Push notifications:** anyone can turn on the header bell to get a Web Push notification when a crawl finds new posts.
+- **Installable PWA:** add it to a phone or desktop, in a light or dark theme.
+- **Adjustable limits:** set posts per source (1–50, default 5) and retention (up to 365 days or forever, default 90 days).
+- **Owner-only admin:** Google sign-in through Cognito, restricted to a single allowed email.
+
+## How it works
+
+![AWS architecture of feedzydev](docs/diagrams/aws-architecture.png)
+
+1. **Serve:** CloudFront is the single entry point. It serves the Next.js static export from a private S3 bucket and forwards `/api/*` to API Gateway, so the frontend needs no CORS.
+2. **Read:** public requests reach the API Lambda, which reads posts and sources from DynamoDB.
+3. **Crawl:** EventBridge Scheduler invokes the crawler Lambda every hour, and it exits early unless the current hour is a saved crawl hour. A failing source is recorded and skipped without aborting the crawl.
+4. **Notify:** after a full crawl with new posts, the crawler sends VAPID-signed pushes to subscribers and removes endpoints that have gone away.
+5. **Administer:** write routes require a Cognito JWT, and the API Lambda also checks that the token's email is the allowed one.
+
+| Layer          | Technologies                                                               |
+| -------------- | -------------------------------------------------------------------------- |
+| Frontend       | Next.js 15 static export, React 19, Tailwind CSS 4, AWS Amplify            |
+| Backend        | TypeScript Lambdas on Node.js 24 (arm64), DynamoDB, `web-push`             |
+| Infrastructure | CloudFront, S3, API Gateway, Cognito, EventBridge Scheduler, Route 53, ACM |
+| Delivery       | Terraform, GitHub Actions with OIDC (no long-lived AWS keys)               |
+
+## Getting started
+
+You need [Node.js](https://nodejs.org) 24 (pinned in `.nvmrc`) and [pnpm](https://pnpm.io) (pinned by `packageManager` in each package). The UI runs on built-in mock data, so you don't need an AWS account:
 
 ```bash
-cd frontend
+git clone https://github.com/HuyNguyen260398/feedzydev.git
+cd feedzydev/frontend
 pnpm install
-NEXT_PUBLIC_MOCK=1 pnpm dev      # UI against built-in mock data, no AWS needed
+NEXT_PUBLIC_MOCK=1 pnpm dev
 ```
 
-For a real backend set `NEXT_PUBLIC_USER_POOL_ID`, `NEXT_PUBLIC_USER_POOL_CLIENT_ID`
-and `NEXT_PUBLIC_COGNITO_DOMAIN` (see `frontend/.env.example`), plus
-`NEXT_PUBLIC_VAPID_PUBLIC_KEY` to show the notification bell. Never set
-`NEXT_PUBLIC_MOCK` in CI or deploy builds.
+Then open <http://localhost:3000>.
 
-## Quality gates
+To use a real backend instead, copy the variables in [`frontend/.env.example`](frontend/.env.example) into `frontend/.env.local` and fill them in.
+
+> [!WARNING]
+> Never set `NEXT_PUBLIC_MOCK` in CI or deploy builds.
+
+### Project layout
+
+```text
+backend/    Lambda functions: API, crawler, Cognito pre-sign-up
+frontend/   Next.js app: feed (/) and owner admin (/sources)
+infra/      Terraform: bootstrap, envs/prod and reusable modules
+docs/       Architecture, tech stack, runbook and diagrams
+```
+
+### Quality gates
+
+`backend` and `frontend` are separate packages with no root `package.json`, so run commands inside each one. These are the same checks CI runs on pull requests to `main`:
 
 ```bash
 (cd backend  && pnpm install --frozen-lockfile && pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build)
@@ -53,118 +88,120 @@ and `NEXT_PUBLIC_COGNITO_DOMAIN` (see `frontend/.env.example`), plus
 terraform fmt -check -recursive infra
 ```
 
-CI (`.github/workflows/ci.yml`) runs the same gates on pull requests to
-`main`, validates Terraform, and (when `infra/**` or `backend/**`
-changed) runs `terraform plan` with the read-only OIDC role.
+CI also builds the frontend, validates Terraform and, when `infra/**` or `backend/**` changed, runs `terraform plan` with a read-only OIDC role.
 
-## Setup runbook
+## Deploy your own
 
-For the first deployment, follow the step-by-step [go-live runbook](docs/runbooks/go-live.md) (who runs what, checkpoints, troubleshooting, rollback). The summary below is the reference version.
+> [!IMPORTANT]
+> Deploying creates real AWS resources. Usage-based pricing keeps idle cost near zero, but see [Tear down](#tear-down) when you are done.
 
-Prerequisites: AWS CLI authenticated to the target account with admin-level
-rights (first apply only), Terraform >= 1.15, `gh` authenticated to the repo,
-Node + pnpm, and a Route 53 hosted zone for `nghuy.link`.
+You need:
 
-### 1. Bootstrap state bucket and CI roles
+- AWS CLI access to the target account with admin rights (first apply only)
+- Terraform 1.15 (CI pins 1.15.5)
+- An authenticated `gh` CLI
+- A Route 53 hosted zone
+- A GitHub OIDC provider already present in the account
 
-Before applying, confirm the GitHub OIDC provider already exists in the account
-(`aws iam list-open-id-connect-providers`) and that no Route 53 record already
-uses `feedzydev.nghuy.link`.
+> [!NOTE]
+> The Terraform defaults point at the original account, domain and repository. In a fork, first change the defaults in [`infra/bootstrap/variables.tf`](infra/bootstrap/variables.tf) and [`infra/envs/prod/variables.tf`](infra/envs/prod/variables.tf), including `github_sub_prefix`. This repository uses GitHub's immutable OIDC subjects (`repo:owner@id/name@id:...`), and you can read yours with `gh api repos/OWNER/REPO/actions/oidc/customization/sub`.
+
+**1. Bootstrap the state bucket and CI roles:**
 
 ```bash
 cd infra/bootstrap
 terraform init
 terraform apply
-terraform output      # state_bucket_name, plan_role_arn, deploy_role_arn, permissions_boundary_arn
+terraform output   # state_bucket_name, plan_role_arn, deploy_role_arn, permissions_boundary_arn
 ```
 
-### 2. Create the Google OAuth client
+**2. Create a Google OAuth client.** In the [Google Cloud console](https://console.cloud.google.com/), set up the consent screen and add your account as a test user. Then create a **Web application** client with this redirect URI:
 
-1. Open https://console.cloud.google.com/ and create (or select) a project.
-2. Go to **APIs & Services > OAuth consent screen**. Choose **External**, fill
-   in app name and your email, save. Under **Audience**, add your Google
-   account as a test user (or publish the app).
-3. Go to **APIs & Services > Credentials > Create credentials > OAuth client ID**.
-4. Application type: **Web application**. Name it `feedzydev`.
-5. Under **Authorized redirect URIs** add exactly:
-   `https://feedzydev-claude-010382427026.auth.ap-southeast-1.amazoncognito.com/oauth2/idpresponse`
-6. Click **Create** and copy the **Client ID** and **Client secret**.
-
-### 3. Set GitHub variables and secrets
-
-Check `gh variable list` and `gh secret list` first so nothing collides with
-existing names. Values come from the bootstrap outputs and the Google client.
-
-```bash
-gh variable set AWS_REGION            --body "ap-southeast-1"
-gh variable set STATE_BUCKET_NAME     --body "feedzydev-claude-tfstate-010382427026"
-gh variable set ALLOWED_EMAIL         --body "huynguyen260398@gmail.com"
-gh variable set VAPID_PUBLIC_KEY      --body "<from npx web-push generate-vapid-keys>"
-
-gh secret set AWS_PLAN_ROLE_ARN   --body "$(cd infra/bootstrap && terraform output -raw plan_role_arn)"
-gh secret set AWS_DEPLOY_ROLE_ARN --body "$(cd infra/bootstrap && terraform output -raw deploy_role_arn)"
-gh secret set GOOGLE_CLIENT_ID     # paste when prompted
-gh secret set GOOGLE_CLIENT_SECRET # paste when prompted
-gh secret set VAPID_PRIVATE_KEY    # paste when prompted
+```text
+https://<cognito_domain_prefix>.auth.<region>.amazoncognito.com/oauth2/idpresponse
 ```
 
-### 4. Push to deploy
+**3. Generate VAPID keys** with `npx web-push generate-vapid-keys`. Deploys fail without them.
 
-```bash
-git push -u origin main
-```
+**4. Configure the repository** with `gh variable set` and `gh secret set`:
 
-The Deploy workflow runs the CI gates, then applies Terraform, builds the
-frontend with the Cognito outputs, syncs to S3, invalidates CloudFront and
-smoke-tests `/api/posts`. Re-run it any time with **Run workflow**
-(`workflow_dispatch`).
+| Name                   | Kind     | Value                                     |
+| ---------------------- | -------- | ----------------------------------------- |
+| `AWS_REGION`           | Variable | Target region, such as `ap-southeast-1`   |
+| `STATE_BUCKET_NAME`    | Variable | `state_bucket_name` bootstrap output      |
+| `ALLOWED_EMAIL`        | Variable | The one Google account allowed to sign in |
+| `VAPID_PUBLIC_KEY`     | Variable | VAPID public key                          |
+| `AWS_PLAN_ROLE_ARN`    | Secret   | `plan_role_arn` bootstrap output          |
+| `AWS_DEPLOY_ROLE_ARN`  | Secret   | `deploy_role_arn` bootstrap output        |
+| `GOOGLE_CLIENT_ID`     | Secret   | Google OAuth client ID                    |
+| `GOOGLE_CLIENT_SECRET` | Secret   | Google OAuth client secret                |
+| `VAPID_PRIVATE_KEY`    | Secret   | VAPID private key                         |
 
-### 5. Verify
+**5. Push to `main`.** The Deploy workflow runs the CI gates, applies Terraform, builds the frontend with the Cognito outputs, syncs it to S3, invalidates CloudFront and smoke-tests `/api/posts`. You can re-run it at any time with **Run workflow**.
 
-HTTPS on the subdomain; the feed loads on desktop and mobile width; Google
-sign-in works for the owner and a different account is rejected; adding a
-source by homepage URL works; "Crawl now" yields posts with thumbnails; the
-scheduler runs hourly (Asia/Ho_Chi_Minh) and crawls at the saved crawl hours;
-admin endpoints return 401 without a token.
+**6. Verify the deployment:**
 
-## Starter sources
+- The site loads over HTTPS on desktop and mobile widths.
+- Google sign-in works for the owner and rejects any other account.
+- Adding a source and clicking **Crawl now** yields posts.
+- Admin endpoints return 401 without a token.
 
-Paste any of these homepages (or feed URLs) on the Sources page. Feed URLs were
-checked to respond.
+For checkpoints and troubleshooting, follow the step-by-step [go-live runbook](docs/runbooks/go-live.md).
 
-- AWS DevOps Blog: https://aws.amazon.com/blogs/devops/feed/
-- AWS Containers Blog: https://aws.amazon.com/blogs/containers/feed/
-- HashiCorp Blog: https://www.hashicorp.com/blog/feed.xml
-- Kubernetes Blog: https://kubernetes.io/feed.xml
-- CNCF Blog: https://www.cncf.io/feed/
-- GitHub Engineering: https://github.blog/engineering/feed/
-- Grafana Labs Blog: https://grafana.com/blog/index.xml
-- Docker Blog: https://www.docker.com/blog/ (paste the homepage; feed discovery finds the feed)
+### Starter sources
 
-## Tear down
+Paste any of these on the Sources page:
+
+- AWS DevOps Blog: `https://aws.amazon.com/blogs/devops/feed/`
+- AWS Containers Blog: `https://aws.amazon.com/blogs/containers/feed/`
+- HashiCorp Blog: `https://www.hashicorp.com/blog/feed.xml`
+- Kubernetes Blog: `https://kubernetes.io/feed.xml`
+- CNCF Blog: `https://www.cncf.io/feed/`
+- GitHub Engineering: `https://github.blog/engineering/feed/`
+- Grafana Labs Blog: `https://grafana.com/blog/index.xml`
+- Docker Blog: `https://www.docker.com/blog/` (feed discovery finds the feed)
+
+> [!TIP]
+> Use the per-blog feeds for AWS. Discovery on `https://aws.amazon.com/blogs/` only finds AWS "Recent Announcements", because that page advertises no blog feed of its own.
+
+### Tear down
+
+The commands below use the default resource names, so substitute your own if you changed them.
+
+<details>
+<summary>Show the tear-down steps</summary>
+
+**1. Destroy the prod stack.** The site bucket is not `force_destroy`, so empty it first. The Cognito user pool has deletion protection, so temporarily set `deletion_protection = "INACTIVE"` in `infra/modules/auth/main.tf` and apply that change. Avoid `aws cognito-idp update-user-pool`, which resets unspecified settings.
 
 ```bash
 cd infra/envs/prod
 terraform init -backend-config="bucket=feedzydev-claude-tfstate-010382427026" -backend-config="region=ap-southeast-1"
-aws s3 rm s3://feedzydev-claude-prod-site-010382427026 --recursive   # site bucket is not force_destroy
-# The Cognito user pool has deletion protection. Temporarily set
-# deletion_protection = "INACTIVE" in infra/modules/auth/main.tf and apply it first
-# (avoid `aws cognito-idp update-user-pool`, which resets unspecified settings).
-terraform apply        # applies only the deletion-protection change
-terraform destroy      # prompts for the three required variables (or use TF_VAR_*)
+aws s3 rm s3://feedzydev-claude-prod-site-010382427026 --recursive
+terraform apply     # applies only the deletion-protection change
+terraform destroy   # prompts for the required variables (or use TF_VAR_*)
+```
 
-# Then the bootstrap stack. Empty the state bucket first (all object versions):
+**2. Destroy the bootstrap stack.** The state bucket has `prevent_destroy`, so remove that lifecycle setting from `infra/bootstrap/main.tf` first. Then empty the bucket, including all object versions:
+
+```bash
 aws s3api delete-objects --bucket feedzydev-claude-tfstate-010382427026 \
   --delete "$(aws s3api list-object-versions --bucket feedzydev-claude-tfstate-010382427026 \
   --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' --output json)"
 cd ../../bootstrap && terraform destroy
 ```
 
-If the bucket also holds delete markers, remove them the same way
-(`DeleteMarkers[]`). The site bucket is not `force_destroy`, which is why the block
-above empties it before the prod destroy.
+If the bucket also holds delete markers, remove them the same way (`DeleteMarkers[]`).
 
-## Known behaviour
+</details>
 
-Renaming a source does not rename it on already-crawled posts; those posts keep
-the old name until they expire (within 90 days).
+## Known behavior
+
+Renaming a source does not rename it on posts that were already crawled. Those posts keep the old name until they expire under the retention setting.
+
+## Documentation
+
+| Document                                    | Contents                                                       |
+| ------------------------------------------- | -------------------------------------------------------------- |
+| [Architecture](docs/architecture.md)        | Diagrams, data model, access patterns, runtime flows, security |
+| [Tech stack](docs/tech-stack.md)            | Libraries, service configuration, limits, CI/CD details        |
+| [Go-live runbook](docs/runbooks/go-live.md) | First deployment, troubleshooting, rollback                    |
