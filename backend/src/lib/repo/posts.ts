@@ -77,6 +77,8 @@ export class PostsRepo {
     since?: string;
     /** Lower-cased terms that must all appear in the title or source name. */
     search?: string[];
+    /** Searchable names by sourceId; a source not listed uses the name stored on the post. */
+    sourceNames?: ReadonlyMap<string, string>;
   }): Promise<{ items: Post[]; nextCursor?: string }> {
     const bySource = q.sourceId !== undefined;
     const sinceCond = q.since !== undefined ? ' AND publishedAt >= :since' : '';
@@ -120,7 +122,7 @@ export class PostsRepo {
       const res = await query(SEARCH_PAGE_SIZE, key);
       const page = (res.Items ?? []) as Post[];
       for (let i = 0; i < page.length; i++) {
-        if (!matchesSearch(page[i], terms)) continue;
+        if (!matchesSearch(page[i], terms, q.sourceNames?.get(page[i].sourceId))) continue;
         items.push(page[i]);
         if (items.length === q.limit) {
           const more = i < page.length - 1 || res.LastEvaluatedKey !== undefined;

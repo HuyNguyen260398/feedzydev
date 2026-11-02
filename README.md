@@ -196,7 +196,9 @@ If the bucket also holds delete markers, remove them the same way (`DeleteMarker
 
 ## Known behavior
 
-Renaming a source does not rename it on posts that were already crawled. Those posts keep the old name until they expire under the retention setting.
+A source's full and short names apply to its posts as soon as they are saved, including posts that were already crawled. Push notifications use the full name the source had when the post was crawled.
+
+Changing a source's URL keeps the posts already crawled from the old feed. They stay until they expire under the retention setting.
 
 ## Documentation
 

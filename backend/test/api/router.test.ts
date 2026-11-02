@@ -154,14 +154,56 @@ describe('public routes', () => {
   test('q is split into lower-cased search terms; blank is ignored; too long gives 400', async () => {
     const m = mk();
     await route(ev('GET', '/posts', { query: { q: '  Kubernetes   UPGRADES ' } }), m.deps);
-    expect(m.posts.listPage).toHaveBeenLastCalledWith({
-      limit: 30,
-      search: ['kubernetes', 'upgrades'],
-    });
+    expect(m.posts.listPage).toHaveBeenLastCalledWith(
+      expect.objectContaining({ limit: 30, search: ['kubernetes', 'upgrades'] }),
+    );
     await route(ev('GET', '/posts', { query: { q: '   ' } }), m.deps);
     expect(m.posts.listPage).toHaveBeenLastCalledWith({ limit: 30 });
     const r = await route(ev('GET', '/posts', { query: { q: 'x'.repeat(101) } }), m.deps);
     expect(r.statusCode).toBe(400);
+  });
+
+  test('GET /posts reports the current names of a source, not the ones stored on the post', async () => {
+    const m = mk();
+    m.sources.list.mockResolvedValue([src({ name: 'Renamed Blog', shortName: 'RB' })]);
+    const body = parse(await route(ev('GET', '/posts'), m.deps));
+    expect(body.items[0].sourceName).toBe('Renamed Blog');
+    expect(body.items[0].sourceShortName).toBe('RB');
+  });
+
+  test('GET /posts omits sourceShortName when the source has none', async () => {
+    const body = parse(await route(ev('GET', '/posts'), mk().deps));
+    expect(body.items[0].sourceName).toBe('Blog');
+    expect(body.items[0]).not.toHaveProperty('sourceShortName');
+  });
+
+  test('GET /posts keeps the stored name when the source no longer exists', async () => {
+    const m = mk();
+    m.sources.list.mockResolvedValue([]);
+    const body = parse(await route(ev('GET', '/posts'), m.deps));
+    expect(body.items[0].sourceName).toBe('Blog');
+  });
+
+  test('GET /posts searches both current names of every source', async () => {
+    const m = mk();
+    m.sources.list.mockResolvedValue([
+      src({ name: 'Renamed Blog', shortName: 'RB' }),
+      src({ sourceId: 'S2', name: 'Plain' }),
+    ]);
+    await route(ev('GET', '/posts', { query: { q: 'rb' } }), m.deps);
+    const [query] = m.posts.listPage.mock.calls.at(-1) as unknown as [
+      { sourceNames: Map<string, string> },
+    ];
+    expect(query.sourceNames.get('S1')).toBe('Renamed Blog\nRB');
+    expect(query.sourceNames.get('S2')).toBe('Plain');
+  });
+
+  test('GET /sources includes shortName when set', async () => {
+    const m = mk();
+    m.sources.list.mockResolvedValue([src({ shortName: 'B' })]);
+    expect(parse(await route(ev('GET', '/sources'), m.deps))).toEqual({
+      items: [{ sourceId: 'S1', name: 'Blog', shortName: 'B', siteUrl: 'https://b.example' }],
+    });
   });
 
   test('bad cursor gives 400 INVALID_CURSOR', async () => {
@@ -515,6 +557,142 @@ describe('admin routes', () => {
       expect(r.statusCode).toBe(400);
       expect(parse(r).error.code).toBe('INVALID_INPUT');
     }
+  });
+
+  describe('PATCH shortName', () => {
+    const patch = (m: ReturnType<typeof mk>, body: unknown) =>
+      route(
+        ev('PATCH', '/admin/sources/S1', { claims: owner, body: JSON.stringify(body) }),
+        m.deps,
+      );
+
+    test('trims and caps at 30 characters', async () => {
+      const m = mk();
+      expect((await patch(m, { shortName: '  K8s ' })).statusCode).toBe(200);
+      expect(m.sources.update).toHaveBeenLastCalledWith('S1', { shortName: 'K8s' });
+      await patch(m, { shortName: 'x'.repeat(40) });
+      expect(m.sources.update).toHaveBeenLastCalledWith('S1', { shortName: 'x'.repeat(30) });
+    });
+
+    test.each([[null], [''], ['   ']])('%j clears it', async (shortName) => {
+      const m = mk();
+      expect((await patch(m, { shortName })).statusCode).toBe(200);
+      expect(m.sources.update).toHaveBeenLastCalledWith('S1', { shortName: null });
+    });
+
+    test('a non-string is 400', async () => {
+      const m = mk();
+      const r = await patch(m, { shortName: 5 });
+      expect(r.statusCode).toBe(400);
+      expect(parse(r).error.code).toBe('INVALID_INPUT');
+      expect(m.sources.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('PATCH feedUrl', () => {
+    const NEW_URL = 'https://new.example/feed';
+    const patch = (m: ReturnType<typeof mk>, body: unknown, id = 'S1') =>
+      route(
+        ev('PATCH', `/admin/sources/${id}`, { claims: owner, body: JSON.stringify(body) }),
+        m.deps,
+      );
+
+    test('stores the new feed and its site link, then crawls the source', async () => {
+      const m = mk();
+      m.sources.update.mockResolvedValue(src({ feedUrl: NEW_URL }));
+      const r = await patch(m, { feedUrl: NEW_URL });
+      expect(r.statusCode).toBe(200);
+      expect(m.fetchText).toHaveBeenCalledWith(NEW_URL, { timeoutMs: 8000 });
+      expect(m.sources.update).toHaveBeenCalledWith('S1', {
+        feedUrl: NEW_URL,
+        siteUrl: 'https://b.example/',
+      });
+      expect(m.invokeCrawl).toHaveBeenCalledWith({ sourceId: 'S1' });
+    });
+
+    test('a feed without a site link falls back to the URL origin', async () => {
+      const m = mk();
+      m.fetchText.mockImplementation(async (url: string) => ({
+        status: 200,
+        url,
+        contentType: 'application/rss+xml',
+        body: RSS.replace('<link>https://b.example/</link>', ''),
+      }));
+      await patch(m, { feedUrl: NEW_URL });
+      expect(m.sources.update).toHaveBeenCalledWith('S1', {
+        feedUrl: NEW_URL,
+        siteUrl: 'https://new.example',
+      });
+    });
+
+    test('an unchanged URL is not fetched, stored or crawled', async () => {
+      const m = mk();
+      const r = await patch(m, { feedUrl: 'https://b.example/feed#top', enabled: true });
+      expect(r.statusCode).toBe(200);
+      expect(m.fetchText).not.toHaveBeenCalled();
+      expect(m.sources.update).toHaveBeenCalledWith('S1', { enabled: true });
+      expect(m.invokeCrawl).not.toHaveBeenCalled();
+    });
+
+    test('a URL used by another source is 409', async () => {
+      const m = mk();
+      m.sources.findByFeedUrl.mockResolvedValue(src({ sourceId: 'S2', feedUrl: NEW_URL }));
+      const r = await patch(m, { feedUrl: NEW_URL });
+      expect(r.statusCode).toBe(409);
+      expect(parse(r).error.code).toBe('DUPLICATE_SOURCE');
+      expect(m.sources.update).not.toHaveBeenCalled();
+    });
+
+    test('a URL that is not a feed is 422 and nothing is saved, including other fields', async () => {
+      const m = mk();
+      m.fetchText.mockImplementation(async (url: string) => ({
+        status: 200,
+        url,
+        contentType: 'text/html',
+        body: '<html></html>',
+      }));
+      const r = await patch(m, { feedUrl: NEW_URL, name: 'Other' });
+      expect(r.statusCode).toBe(422);
+      expect(parse(r).error.code).toBe('NOT_A_FEED');
+      expect(m.sources.update).not.toHaveBeenCalled();
+      expect(m.invokeCrawl).not.toHaveBeenCalled();
+    });
+
+    test('a URL that cannot be fetched is 422', async () => {
+      const m = mk();
+      m.fetchText.mockRejectedValue(new Error('timeout'));
+      expect((await patch(m, { feedUrl: NEW_URL })).statusCode).toBe(422);
+    });
+
+    test('an invalid URL is 400', async () => {
+      const m = mk();
+      const r = await patch(m, { feedUrl: 'ftp://a' });
+      expect(r.statusCode).toBe(400);
+      expect(parse(r).error.code).toBe('INVALID_URL');
+    });
+
+    test('a missing source is 404 and its new URL is never fetched', async () => {
+      const m = mk();
+      expect((await patch(m, { feedUrl: NEW_URL }, 'NOPE')).statusCode).toBe(404);
+      expect(m.fetchText).not.toHaveBeenCalled();
+    });
+
+    test('a source left disabled is not crawled', async () => {
+      const m = mk();
+      m.sources.update.mockResolvedValue(src({ feedUrl: NEW_URL, enabled: false }));
+      expect((await patch(m, { feedUrl: NEW_URL, enabled: false })).statusCode).toBe(200);
+      expect(m.invokeCrawl).not.toHaveBeenCalled();
+    });
+
+    test('a crawl-trigger failure still saves and returns 200', async () => {
+      const m = mk();
+      m.sources.update.mockResolvedValue(src({ feedUrl: NEW_URL }));
+      m.invokeCrawl.mockRejectedValueOnce(new Error('boom'));
+      const spy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+      const r = await patch(m, { feedUrl: NEW_URL });
+      spy.mockRestore();
+      expect(r.statusCode).toBe(200);
+    });
   });
 
   test('GET /admin/settings returns settings with timezone; requires owner', async () => {

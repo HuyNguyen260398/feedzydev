@@ -20,6 +20,17 @@ export interface CrawlResult {
   at: string;
 }
 
+export interface SourcePatch {
+  name?: string;
+  /** null removes it. */
+  shortName?: string | null;
+  feedUrl?: string;
+  siteUrl?: string;
+  enabled?: boolean;
+  /** null removes the override. */
+  postsPerSource?: number | null;
+}
+
 export class SourcesRepo {
   constructor(
     private readonly doc: DynamoDBDocumentClient,
@@ -78,10 +89,7 @@ export class SourcesRepo {
     return source;
   }
 
-  async update(
-    id: string,
-    patch: { name?: string; enabled?: boolean; postsPerSource?: number | null },
-  ): Promise<Source | undefined> {
+  async update(id: string, patch: SourcePatch): Promise<Source | undefined> {
     const sets: string[] = [];
     const removes: string[] = [];
     const names: Record<string, string> = {};
@@ -90,6 +98,24 @@ export class SourcesRepo {
       sets.push('#name = :name');
       names['#name'] = 'name';
       values[':name'] = patch.name;
+    }
+    if (patch.shortName !== undefined) {
+      names['#short'] = 'shortName';
+      if (patch.shortName === null) removes.push('#short');
+      else {
+        sets.push('#short = :short');
+        values[':short'] = patch.shortName;
+      }
+    }
+    if (patch.feedUrl !== undefined) {
+      sets.push('#feedUrl = :feedUrl');
+      names['#feedUrl'] = 'feedUrl';
+      values[':feedUrl'] = patch.feedUrl;
+    }
+    if (patch.siteUrl !== undefined) {
+      sets.push('#siteUrl = :siteUrl');
+      names['#siteUrl'] = 'siteUrl';
+      values[':siteUrl'] = patch.siteUrl;
     }
     if (patch.enabled !== undefined) {
       sets.push('#enabled = :enabled');

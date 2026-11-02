@@ -33,7 +33,7 @@ export default function PostCard({
       >
         <div className="flex min-w-0 items-center justify-between gap-2 font-mono text-xs">
           <span className="truncate rounded-md border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-accent">
-            {post.sourceName}
+            {post.sourceShortName ?? post.sourceName}
           </span>
           <time
             dateTime={post.publishedAt}

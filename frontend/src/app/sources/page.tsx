@@ -6,12 +6,13 @@ import AddSourceForm from '@/components/sources/AddSourceForm';
 import CrawlSettingsPanel from '@/components/sources/CrawlSettingsPanel';
 import SignInPanel from '@/components/sources/SignInPanel';
 import SourcesList from '@/components/sources/SourcesList';
+import { RefreshIcon, SignOutIcon, SpinnerIcon } from '@/components/sources/icons';
 import { ApiError, listAdminSources, triggerCrawl } from '@/lib/api';
 import { signOut, useAuth } from '@/lib/auth';
 import type { AdminSource, CrawlSettings } from '@/lib/types';
 
-const btn =
-  'min-h-11 cursor-pointer rounded-lg border border-border bg-surface px-4 text-sm font-medium transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50';
+const iconBtn =
+  'inline-flex size-11 cursor-pointer items-center justify-center rounded-lg border border-border bg-surface transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50';
 
 function Skeleton() {
   return (
@@ -84,8 +85,14 @@ export default function SourcesPage() {
   if (auth.status === 'signedOut') return <SignInPanel />;
 
   const signOutBtn = (
-    <button type="button" onClick={() => void signOut()} className={btn}>
-      Sign out
+    <button
+      type="button"
+      onClick={() => void signOut()}
+      aria-label="Sign out"
+      title="Sign out"
+      className={iconBtn}
+    >
+      <SignOutIcon />
     </button>
   );
 
@@ -115,8 +122,15 @@ export default function SourcesPage() {
       <CrawlSettingsPanel onLoaded={onSettings} />
 
       <div className="flex flex-wrap items-center gap-3">
-        <button type="button" onClick={() => void crawl()} disabled={crawling} className={btn}>
-          Crawl now
+        <button
+          type="button"
+          onClick={() => void crawl()}
+          disabled={crawling}
+          aria-label={crawling ? 'Starting crawl' : 'Crawl now'}
+          title={crawling ? 'Starting crawl' : 'Crawl now'}
+          className={iconBtn}
+        >
+          {crawling ? <SpinnerIcon /> : <RefreshIcon />}
         </button>
         {notice && (
           <p role="status" className="font-mono text-xs text-accent">

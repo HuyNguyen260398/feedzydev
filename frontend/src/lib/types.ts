@@ -8,11 +8,13 @@ export interface PublicPost {
   thumbnailUrl?: string;
   sourceId: string;
   sourceName: string;
+  sourceShortName?: string;
 }
 
 export interface PublicSource {
   sourceId: string;
   name: string;
+  shortName?: string;
   siteUrl: string;
   iconUrl?: string;
 }
@@ -20,6 +22,7 @@ export interface PublicSource {
 export interface AdminSource {
   sourceId: string;
   name: string;
+  shortName?: string;
   siteUrl: string;
   feedUrl: string;
   iconUrl?: string;
@@ -30,6 +33,16 @@ export interface AdminSource {
   lastError?: string;
   lastNewCount?: number;
   postsPerSource?: number;
+}
+
+export interface SourcePatch {
+  name?: string;
+  /** null removes it. */
+  shortName?: string | null;
+  feedUrl?: string;
+  enabled?: boolean;
+  /** null removes the override. */
+  postsPerSource?: number | null;
 }
 
 export interface CrawlSettings {

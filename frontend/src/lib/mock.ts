@@ -6,11 +6,17 @@ import type {
   Page,
   PublicPost,
   PublicSource,
+  SourcePatch,
 } from '@/lib/types';
 
 const SOURCES: PublicSource[] = [
   { sourceId: 'k8s', name: 'Kubernetes Blog', siteUrl: 'https://kubernetes.io/blog/' },
-  { sourceId: 'aws', name: 'AWS DevOps Blog', siteUrl: 'https://aws.amazon.com/blogs/devops/' },
+  {
+    sourceId: 'aws',
+    name: 'AWS DevOps Blog',
+    shortName: 'AWS',
+    siteUrl: 'https://aws.amazon.com/blogs/devops/',
+  },
   { sourceId: 'hashi', name: 'HashiCorp', siteUrl: 'https://www.hashicorp.com/blog' },
   { sourceId: 'cncf', name: 'CNCF', siteUrl: 'https://www.cncf.io/blog/' },
   { sourceId: 'sre', name: 'SRE Weekly', siteUrl: 'https://sreweekly.com/' },
@@ -64,7 +70,8 @@ const AUTHORS = ['Priya Raman', 'Marco Rossi', undefined, 'Lena Fischer', 'Tuan 
 function buildPosts(): PublicPost[] {
   const now = Date.now();
   return TITLES.map((title, i) => {
-    const source = SOURCES[i % SOURCES.length];
+    const seed = SOURCES[i % SOURCES.length];
+    const source = admin().find((s) => s.sourceId === seed.sourceId) ?? seed;
     // Spread ~40 posts over the last 5 days, newest first.
     const publishedAt = new Date(now - (i * 5 * 24 * 60 * 60 * 1000) / TITLES.length - i * 37_000);
     const thumbnailUrl =
@@ -82,6 +89,7 @@ function buildPosts(): PublicPost[] {
       thumbnailUrl,
       sourceId: source.sourceId,
       sourceName: source.name,
+      ...(source.shortName ? { sourceShortName: source.shortName } : {}),
     };
   });
 }
@@ -102,7 +110,11 @@ export async function mockPosts(p: {
     (post) =>
       (!p.sourceId || post.sourceId === p.sourceId) &&
       (!p.since || post.publishedAt >= p.since) &&
-      terms.every((t) => `${post.title}\n${post.sourceName}`.toLowerCase().includes(t)),
+      terms.every((t) =>
+        `${post.title}\n${post.sourceName}\n${post.sourceShortName ?? ''}`
+          .toLowerCase()
+          .includes(t),
+      ),
   );
   const start = p.cursor ? Number(p.cursor) : 0;
   const end = start + (p.limit ?? 30);
@@ -114,7 +126,7 @@ export async function mockPosts(p: {
 
 export async function mockSources(): Promise<PublicSource[]> {
   await delay(150);
-  return SOURCES;
+  return admin().filter((s) => s.enabled);
 }
 
 const HOUR = 3_600_000;
@@ -197,17 +209,16 @@ export async function mockAdd(i: { feedUrl: string; name?: string }): Promise<Ad
   return created;
 }
 
-export async function mockUpdate(
-  id: string,
-  patch: { name?: string; enabled?: boolean; postsPerSource?: number | null },
-): Promise<AdminSource> {
+export async function mockUpdate(id: string, patch: SourcePatch): Promise<AdminSource> {
   await delay(200);
   const s = admin().find((x) => x.sourceId === id);
   if (!s) throw new Error('not found');
-  const { postsPerSource, ...rest } = patch;
+  const { postsPerSource, shortName, ...rest } = patch;
   Object.assign(s, rest);
   if (postsPerSource === null) delete s.postsPerSource;
   else if (postsPerSource !== undefined) s.postsPerSource = postsPerSource;
+  if (shortName === null) delete s.shortName;
+  else if (shortName !== undefined) s.shortName = shortName;
   return { ...s };
 }
 

@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import AddSourceForm from '@/components/sources/AddSourceForm';
 import { ApiError, addSource, discover } from '@/lib/api';
 import type { FeedCandidate } from '@/lib/types';
+import { expectIconOnly } from '../helpers';
 
 vi.mock('@/lib/api', async () => {
   class ApiError extends Error {
@@ -99,5 +100,16 @@ describe('AddSourceForm', () => {
     expect(addSource).toHaveBeenCalledTimes(2);
     expect(addSource).toHaveBeenNthCalledWith(2, { feedUrl: c2.feedUrl });
     expect(onAdded).toHaveBeenCalledTimes(1);
+  });
+
+  it('Discover shows only an icon, and reports that it is searching', () => {
+    vi.mocked(discover).mockReturnValue(new Promise(() => {}));
+    render(<AddSourceForm onAdded={vi.fn()} />);
+    expectIconOnly(screen.getByRole('button', { name: 'Discover' }), 'Discover');
+    fireEvent.change(screen.getByLabelText('Blog or feed URL'), {
+      target: { value: 'https://a.example.com' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Discover' }));
+    expect(screen.getByRole('button', { name: 'Discovering' })).toBeDisabled();
   });
 });

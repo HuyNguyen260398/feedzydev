@@ -157,6 +157,24 @@ describe('PostsRepo', () => {
       expect(inputs[1].ExclusiveStartKey).toEqual({ k: 1 });
     });
 
+    it('searches the current names of a source instead of the name stored on the post', async () => {
+      ddb.on(QueryCommand).resolves({
+        Items: [
+          { ...mk(1, 'a', 'Old Name'), sourceId: 'renamed' },
+          { ...mk(2, 'b', 'Old Name'), sourceId: 'deleted' },
+        ],
+      });
+      const sourceNames = new Map([['renamed', 'Kubernetes Blog\nK8s']]);
+      const hit = async (term: string) =>
+        (await repo.listPage({ limit: 10, search: [term], sourceNames })).items.map(
+          (p) => p.postId,
+        );
+      expect(await hit('k8s')).toEqual(['p1']);
+      expect(await hit('kubernetes')).toEqual(['p1']);
+      // A source that no longer exists falls back to the name on the post.
+      expect(await hit('old')).toEqual(['p2']);
+    });
+
     it('requires every term to match', async () => {
       ddb.on(QueryCommand).resolves({
         Items: [mk(1, 'Kubernetes upgrades'), mk(2, 'Kubernetes', 'Upgrades Weekly'), mk(3, 'x')],

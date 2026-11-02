@@ -6,6 +6,7 @@ import type {
   Page,
   PublicPost,
   PublicSource,
+  SourcePatch,
 } from '@/lib/types';
 
 const BASE = '/api';
@@ -102,10 +103,7 @@ export async function addSource(i: {
   return request<AdminSource>('/admin/sources', { method: 'POST', body: i, admin: true });
 }
 
-export async function updateSource(
-  id: string,
-  patch: { name?: string; enabled?: boolean; postsPerSource?: number | null },
-): Promise<AdminSource> {
+export async function updateSource(id: string, patch: SourcePatch): Promise<AdminSource> {
   if (process.env.NEXT_PUBLIC_MOCK === '1')
     return (await import('@/lib/mock')).mockUpdate(id, patch);
   return request<AdminSource>(`/admin/sources/${encodeURIComponent(id)}`, {

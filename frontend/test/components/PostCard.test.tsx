@@ -31,6 +31,19 @@ describe('PostCard', () => {
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
   });
 
+  it('tags the post with the short name but themes its thumbnail by the full name', () => {
+    const { container } = render(
+      <PostCard
+        post={{ ...base, thumbnailUrl: undefined, sourceShortName: 'KW' }}
+        variant="tile"
+        now={now}
+      />,
+    );
+    expect(screen.getByText('KW')).toBeInTheDocument();
+    expect(screen.queryByText('Kube Weekly')).not.toBeInTheDocument();
+    expect(container.querySelector('svg')).toHaveTextContent('> kube_');
+  });
+
   it('omits author when absent', () => {
     render(<PostCard post={{ ...base, author: undefined }} variant="tile" now={now} />);
     expect(screen.queryByText('Jane Doe')).not.toBeInTheDocument();

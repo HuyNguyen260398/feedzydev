@@ -6,7 +6,7 @@ import type { FetchText } from '../lib/http';
 import { MAX_SUBSCRIPTIONS, parseSubscription, subscriptionId } from '../lib/push';
 import type { PostsRepo } from '../lib/repo/posts';
 import type { SettingsRepo } from '../lib/repo/settings';
-import type { SourcesRepo } from '../lib/repo/sources';
+import type { SourcePatch, SourcesRepo } from '../lib/repo/sources';
 import type { SubscriptionsRepo } from '../lib/repo/subscriptions';
 import {
   CRAWL_TIMEZONE,
@@ -19,7 +19,7 @@ import {
 } from '../lib/settings';
 import { MAX_SEARCH_LENGTH, searchTerms } from '../lib/search';
 import type { PublicPost } from '../lib/types';
-import { assertHttpUrl } from '../lib/url';
+import { assertHttpUrl, normalizeUrl } from '../lib/url';
 import { getOwnerEmail } from './auth';
 import { fail, json } from './http';
 
@@ -36,6 +36,7 @@ export interface ApiDeps {
 const DEFAULT_LIMIT = 30;
 const MAX_LIMIT = 50;
 const MAX_NAME_LENGTH = 120;
+const MAX_SHORT_NAME_LENGTH = 30;
 const FEED_TIMEOUT_MS = 8000;
 
 function parseBody(event: APIGatewayProxyEvent): Record<string, unknown> {
@@ -75,23 +76,35 @@ async function listPosts(event: APIGatewayProxyEvent, deps: ApiDeps) {
     throw new AppError(400, 'INVALID_INPUT', `q must be at most ${MAX_SEARCH_LENGTH} characters.`);
   }
   const search = searchTerms(q.q);
+  // Posts store the name a source had when crawled, so edits are applied here on read.
+  const sources = new Map((await deps.sources.list()).map((s) => [s.sourceId, s]));
+  const sourceNames = new Map(
+    [...sources.values()].map((s) => [
+      s.sourceId,
+      s.shortName ? `${s.name}\n${s.shortName}` : s.name,
+    ]),
+  );
   const page = await deps.posts.listPage({
     limit: parseLimit(q.limit),
     ...(q.cursor ? { cursor: q.cursor } : {}),
     ...(q.sourceId ? { sourceId: q.sourceId } : {}),
     ...(since ? { since } : {}),
-    ...(search.length ? { search } : {}),
+    ...(search.length ? { search, sourceNames } : {}),
   });
-  const items: PublicPost[] = page.items.map((p) => ({
-    postId: p.postId,
-    url: p.url,
-    title: p.title,
-    ...(p.author ? { author: p.author } : {}),
-    publishedAt: p.publishedAt,
-    ...(p.thumbnailUrl ? { thumbnailUrl: p.thumbnailUrl } : {}),
-    sourceId: p.sourceId,
-    sourceName: p.sourceName,
-  }));
+  const items: PublicPost[] = page.items.map((p) => {
+    const source = sources.get(p.sourceId);
+    return {
+      postId: p.postId,
+      url: p.url,
+      title: p.title,
+      ...(p.author ? { author: p.author } : {}),
+      publishedAt: p.publishedAt,
+      ...(p.thumbnailUrl ? { thumbnailUrl: p.thumbnailUrl } : {}),
+      sourceId: p.sourceId,
+      sourceName: source?.name ?? p.sourceName,
+      ...(source?.shortName ? { sourceShortName: source.shortName } : {}),
+    };
+  });
   return json(200, { items, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) });
 }
 
@@ -102,6 +115,7 @@ async function listPublicSources(deps: ApiDeps) {
     .map((s) => ({
       sourceId: s.sourceId,
       name: s.name,
+      ...(s.shortName ? { shortName: s.shortName } : {}),
       siteUrl: s.siteUrl,
       ...(s.iconUrl ? { iconUrl: s.iconUrl } : {}),
     }));
@@ -135,21 +149,34 @@ async function discover(event: APIGatewayProxyEvent, deps: ApiDeps) {
   return json(200, { candidates });
 }
 
+const notAFeed = () => fail(422, 'NOT_A_FEED', 'That URL does not look like an RSS/Atom feed.');
+const duplicateFeed = () => fail(409, 'DUPLICATE_SOURCE', 'This feed has already been added.');
+
+/** The parsed feed at a URL, or null when it cannot be fetched or is not a feed. */
+async function fetchFeed(feedUrl: string, deps: ApiDeps) {
+  try {
+    const res = await deps.fetchText(feedUrl, { timeoutMs: FEED_TIMEOUT_MS });
+    return res.status >= 200 && res.status < 300 ? parseFeed(res.body, res.url) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Starts a crawl of one source; if this fails, the next scheduled crawl picks it up. */
+async function crawlSoon(sourceId: string, deps: ApiDeps) {
+  try {
+    await deps.invokeCrawl({ sourceId });
+  } catch (err) {
+    console.error('invokeCrawl failed after saving a source', err);
+  }
+}
+
 async function addSource(event: APIGatewayProxyEvent, deps: ApiDeps) {
   const body = parseBody(event);
   const feedUrl = assertHttpUrl(body.feedUrl);
   const iconUrl = body.iconUrl === undefined ? undefined : assertHttpUrl(body.iconUrl);
-  if (await deps.sources.findByFeedUrl(feedUrl)) {
-    return fail(409, 'DUPLICATE_SOURCE', 'This feed has already been added.');
-  }
-  const notAFeed = () => fail(422, 'NOT_A_FEED', 'That URL does not look like an RSS/Atom feed.');
-  let res;
-  try {
-    res = await deps.fetchText(feedUrl, { timeoutMs: FEED_TIMEOUT_MS });
-  } catch {
-    return notAFeed();
-  }
-  const feed = res.status >= 200 && res.status < 300 ? parseFeed(res.body, res.url) : null;
+  if (await deps.sources.findByFeedUrl(feedUrl)) return duplicateFeed();
+  const feed = await fetchFeed(feedUrl, deps);
   if (!feed) return notAFeed();
 
   const url = new URL(feedUrl);
@@ -161,23 +188,24 @@ async function addSource(event: APIGatewayProxyEvent, deps: ApiDeps) {
     siteUrl: feed.siteUrl ?? url.origin,
     ...(iconUrl ? { iconUrl } : {}),
   });
-  try {
-    await deps.invokeCrawl({ sourceId: source.sourceId });
-  } catch (err) {
-    // The source exists; the next scheduled crawl will pick it up.
-    console.error('invokeCrawl failed after create', err);
-  }
+  await crawlSoon(source.sourceId, deps);
   return json(201, source);
 }
 
 async function patchSource(event: APIGatewayProxyEvent, deps: ApiDeps, id: string) {
   const body = parseBody(event);
-  const patch: { name?: string; enabled?: boolean; postsPerSource?: number | null } = {};
+  const patch: SourcePatch = {};
   if (body.name !== undefined) {
     if (typeof body.name !== 'string' || body.name.trim() === '') {
       throw new AppError(400, 'INVALID_INPUT', 'name must be a non-empty string.');
     }
     patch.name = body.name.trim().slice(0, MAX_NAME_LENGTH);
+  }
+  if (body.shortName !== undefined) {
+    if (body.shortName !== null && typeof body.shortName !== 'string') {
+      throw new AppError(400, 'INVALID_INPUT', 'shortName must be a string or null.');
+    }
+    patch.shortName = body.shortName?.trim().slice(0, MAX_SHORT_NAME_LENGTH) || null;
   }
   if (body.enabled !== undefined) {
     if (typeof body.enabled !== 'boolean') {
@@ -191,8 +219,25 @@ async function patchSource(event: APIGatewayProxyEvent, deps: ApiDeps, id: strin
     }
     patch.postsPerSource = body.postsPerSource;
   }
+  // Checked last, so a bad value in another field does not cost a network fetch.
+  let feedChanged = false;
+  if (body.feedUrl !== undefined) {
+    const feedUrl = assertHttpUrl(body.feedUrl);
+    const current = await deps.sources.get(id);
+    if (!current) return fail(404, 'NOT_FOUND', 'Source not found.');
+    feedChanged = normalizeUrl(feedUrl) !== normalizeUrl(current.feedUrl);
+    if (feedChanged) {
+      if (await deps.sources.findByFeedUrl(feedUrl)) return duplicateFeed();
+      const feed = await fetchFeed(feedUrl, deps);
+      if (!feed) return notAFeed();
+      patch.feedUrl = feedUrl;
+      patch.siteUrl = feed.siteUrl ?? new URL(feedUrl).origin;
+    }
+  }
   const updated = await deps.sources.update(id, patch);
   if (!updated) return fail(404, 'NOT_FOUND', 'Source not found.');
+  // A per-source crawl ignores `enabled`, so a disabled source must not be sent to it.
+  if (feedChanged && updated.enabled) await crawlSoon(id, deps);
   return json(200, updated);
 }
 

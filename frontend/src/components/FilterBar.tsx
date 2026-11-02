@@ -140,7 +140,8 @@ export default function FilterBar({
   onRangeChange(range: DateRange): void;
   onQueryChange?(query: string): void;
 }) {
-  const sorted = [...sources].sort((a, b) => a.name.localeCompare(b.name));
+  const labelOf = (s: PublicSource) => s.shortName ?? s.name;
+  const sorted = [...sources].sort((a, b) => labelOf(a).localeCompare(labelOf(b)));
   const filtered = sourceId !== undefined || range !== 'any' || query.trim() !== '';
   return (
     <div role="group" aria-label="Filter posts" className="flex flex-wrap items-center gap-2">
@@ -154,7 +155,7 @@ export default function FilterBar({
         <option value="">All sources</option>
         {sorted.map((s) => (
           <option key={s.sourceId} value={s.sourceId}>
-            {s.name}
+            {labelOf(s)}
           </option>
         ))}
       </Select>

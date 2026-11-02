@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import CrawlSettingsPanel from '@/components/sources/CrawlSettingsPanel';
 import { getSettings, saveSettings } from '@/lib/api';
+import { expectIconOnly } from '../helpers';
 
 vi.mock('@/lib/api', () => ({
   ApiError: class extends Error {},
@@ -102,6 +103,25 @@ describe('CrawlSettingsPanel', () => {
     render(<CrawlSettingsPanel />);
     await waitFor(() =>
       expect(screen.getByRole('alert')).toHaveTextContent('Could not load settings.'),
+    );
+  });
+
+  it('Save settings shows only an icon, and reports that it is saving', async () => {
+    vi.mocked(saveSettings).mockReturnValue(new Promise(() => {}));
+    render(<CrawlSettingsPanel />);
+    fireEvent.change(await screen.findByLabelText('Posts per source'), {
+      target: { value: '10' },
+    });
+    expectIconOnly(saveBtn(), 'Save settings');
+    fireEvent.click(saveBtn());
+    expect(screen.getByRole('button', { name: 'Saving settings' })).toBeDisabled();
+  });
+
+  it('with crawling off, points to the crawl button without relying on its label', async () => {
+    vi.mocked(getSettings).mockResolvedValue({ ...loaded, crawlHours: [] });
+    render(<CrawlSettingsPanel />);
+    expect(await screen.findByText(/Automatic crawling is off/)).toHaveTextContent(
+      'use the crawl button below',
     );
   });
 });

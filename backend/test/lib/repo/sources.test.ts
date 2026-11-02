@@ -101,6 +101,33 @@ describe('SourcesRepo', () => {
     });
   });
 
+  it('update sets shortName, or removes it on null', async () => {
+    ddb.on(UpdateCommand).resolves({ Attributes: src({}) });
+    await repo.update('id', { shortName: 'K8s' });
+    await repo.update('id', { shortName: null });
+    const [set, clear] = ddb.commandCalls(UpdateCommand).map((c) => c.args[0].input);
+    expect(set.UpdateExpression).toBe('SET #short = :short');
+    expect(set.ExpressionAttributeNames).toEqual({ '#short': 'shortName' });
+    expect(set.ExpressionAttributeValues).toEqual({ ':short': 'K8s' });
+    expect(clear.UpdateExpression).toBe('REMOVE #short');
+    expect(clear.ExpressionAttributeValues).toBeUndefined();
+  });
+
+  it('update sets feedUrl and siteUrl together', async () => {
+    ddb.on(UpdateCommand).resolves({ Attributes: src({}) });
+    await repo.update('id', { feedUrl: 'https://n.test/feed', siteUrl: 'https://n.test' });
+    const input = ddb.commandCalls(UpdateCommand)[0].args[0].input;
+    expect(input.UpdateExpression).toBe('SET #feedUrl = :feedUrl, #siteUrl = :siteUrl');
+    expect(input.ExpressionAttributeNames).toEqual({
+      '#feedUrl': 'feedUrl',
+      '#siteUrl': 'siteUrl',
+    });
+    expect(input.ExpressionAttributeValues).toEqual({
+      ':feedUrl': 'https://n.test/feed',
+      ':siteUrl': 'https://n.test',
+    });
+  });
+
   it('update with only a null override omits ExpressionAttributeValues', async () => {
     ddb.on(UpdateCommand).resolves({ Attributes: src({}) });
     await repo.update('id', { postsPerSource: null });

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { SaveIcon, SpinnerIcon } from '@/components/sources/icons';
 import { ApiError, getSettings, saveSettings } from '@/lib/api';
 import { KEEP_FOREVER, MAX_POSTS, MIN_POSTS, RETENTION_OPTIONS } from '@/lib/settings';
 import { formatHour, zoneOffsetLabel } from '@/lib/time';
@@ -9,7 +10,7 @@ import type { CrawlSettings } from '@/lib/types';
 const HOURS = Array.from({ length: 24 }, (_, h) => h);
 
 function describeHours(hours: number[]): string {
-  if (hours.length === 0) return 'Automatic crawling is off — use “Crawl now”.';
+  if (hours.length === 0) return 'Automatic crawling is off — use the crawl button below.';
   const labels = hours.map(formatHour);
   const list =
     labels.length === 1 ? labels[0] : `${labels.slice(0, -1).join(', ')} and ${labels.at(-1)}`;
@@ -212,9 +213,11 @@ export default function CrawlSettingsPanel({
               type="button"
               onClick={() => void save()}
               disabled={!dirty || !postsValid || busy}
-              className="min-h-11 cursor-pointer rounded-lg border border-accent bg-accent/15 px-4 text-sm font-medium text-accent transition-colors hover:bg-accent hover:text-bg disabled:cursor-not-allowed disabled:opacity-50"
+              aria-label={busy ? 'Saving settings' : 'Save settings'}
+              title={busy ? 'Saving settings' : 'Save settings'}
+              className="inline-flex size-11 cursor-pointer items-center justify-center rounded-lg border border-accent bg-accent/15 text-accent transition-colors hover:bg-accent hover:text-bg disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {busy ? 'Saving…' : 'Save settings'}
+              {busy ? <SpinnerIcon /> : <SaveIcon />}
             </button>
             {notice && (
               <p role="status" className="font-mono text-xs text-accent">

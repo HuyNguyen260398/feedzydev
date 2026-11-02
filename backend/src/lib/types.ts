@@ -13,6 +13,8 @@ export interface ParsedFeed {
 export interface Source {
   sourceId: string;
   name: string;
+  /** Replaces name on post tags and in the sources filter. */
+  shortName?: string;
   siteUrl: string;
   feedUrl: string;
   iconUrl?: string;
@@ -42,13 +44,16 @@ export interface Post {
   publishedAt: string;
   thumbnailUrl?: string;
   sourceId: string;
+  /** The source's name when crawled; the API reports the current name instead. */
   sourceName: string;
   feedKey: 'ALL';
   crawledAt: string;
   /** Legacy DynamoDB TTL; retention is now enforced by the crawler's purge. */
   expiresAt?: number;
 }
-export type PublicPost = Omit<Post, 'feedKey' | 'expiresAt' | 'crawledAt'>;
+export type PublicPost = Omit<Post, 'feedKey' | 'expiresAt' | 'crawledAt'> & {
+  sourceShortName?: string;
+};
 export interface FeedCandidate {
   feedUrl: string;
   title: string;

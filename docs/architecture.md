@@ -37,8 +37,9 @@ Source: [`diagrams/aws-architecture.drawio`](diagrams/aws-architecture.drawio) (
 
 ## Data model
 
-Four DynamoDB tables (`feedzydev-claude-<name>`), all on-demand. There are no joins: each post
-copies its `sourceName` so the feed renders from one query.
+Four DynamoDB tables (`feedzydev-claude-<name>`), all on-demand. Each post copies its `sourceName`
+when crawled. `GET /posts` also reads the `sources` table and reports each source's current name
+and short name, so edits apply to existing posts; the copy is the fallback for a missing source.
 
 | Table | Partition key | Sort key | Key value | PITR |
 |---|---|---|---|---|
@@ -62,7 +63,7 @@ but would become a hot partition if the feed grew by orders of magnitude.
 
 | Table | Attributes |
 |---|---|
-| `sources` | `name`, `siteUrl`, `feedUrl`, `iconUrl?`, `enabled`, `createdAt`, `postsPerSource?` (override), `lastCrawledAt?`, `lastStatus?` (`ok`/`error`), `lastError?` (≤ 500 chars), `lastNewCount?` |
+| `sources` | `name`, `shortName?`, `siteUrl`, `feedUrl`, `iconUrl?`, `enabled`, `createdAt`, `postsPerSource?` (override), `lastCrawledAt?`, `lastStatus?` (`ok`/`error`), `lastError?` (≤ 500 chars), `lastNewCount?` |
 | `posts` | `url`, `title`, `author?`, `publishedAt`, `thumbnailUrl?`, `sourceId`, `sourceName`, `feedKey`, `crawledAt`, `expiresAt?` |
 | `settings` | `postsPerSource`, `crawlHours` (local hours 0–23, empty = off), `retentionDays` (0 = keep forever), `updatedAt?` |
 | `push-subscriptions` | `endpoint`, `p256dh`, `auth`, `createdAt`, `updatedAt` |
@@ -73,7 +74,7 @@ but would become a hot partition if the feed grew by orders of magnitude.
 |---|---|---|
 | List the feed (paged, optional `since`) | API | Query `byPublished`, `feedKey = "ALL"`, descending |
 | List one source's posts | API | Query `bySource`, `sourceId = :s`, descending |
-| Search titles / source names | API | Query the same index page by page and filter in Lambda (no substring index; scan is capped) |
+| Search titles / source names | API | Query the same index page by page and filter in Lambda against current source names (no substring index; scan is capped) |
 | Insert a new post if not seen | Crawler | Conditional `PutItem` on `postId` |
 | Backfill a missing thumbnail | Crawler | `UpdateItem` conditional on `postId` existing and `thumbnailUrl` not |
 | Purge expired posts | Crawler | Query `byPublished` with `publishedAt < cutoff`, then `BatchWriteItem` deletes |

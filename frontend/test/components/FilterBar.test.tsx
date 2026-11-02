@@ -32,6 +32,17 @@ describe('FilterBar', () => {
     expect(options.slice(0, 3)).toEqual(['All sources', 'Alpha Blog', 'Beta Blog']);
   });
 
+  it('lists and sorts sources by short name, falling back to the full name', () => {
+    setup({
+      sources: [
+        { sourceId: 'a', name: 'Alpha Blog', shortName: 'Zed', siteUrl: 'https://a.example' },
+        { sourceId: 'b', name: 'Beta Blog', siteUrl: 'https://b.example' },
+      ],
+    });
+    const options = screen.getAllByRole('option', { hidden: true }).map((o) => o.textContent);
+    expect(options.slice(0, 3)).toEqual(['All sources', 'Beta Blog', 'Zed']);
+  });
+
   it('reports source and date changes; "All sources" maps to undefined', () => {
     const { onSourceChange, onRangeChange } = setup({ sourceId: 'a' });
     fireEvent.change(screen.getByLabelText('Source'), { target: { value: 'b' } });

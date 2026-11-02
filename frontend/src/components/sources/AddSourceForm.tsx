@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { FormEvent } from 'react';
+import { SearchIcon, SpinnerIcon } from '@/components/sources/icons';
 import { ApiError, addSource, discover } from '@/lib/api';
 import { formatPostTime } from '@/lib/time';
 import type { FeedCandidate } from '@/lib/types';
@@ -89,7 +90,7 @@ export default function AddSourceForm({ onAdded }: { onAdded: () => void }) {
 
   return (
     <section aria-label="Add source" className="rounded-xl border border-border bg-surface p-4">
-      <form onSubmit={onDiscover} className="flex flex-col gap-2 sm:flex-row">
+      <form onSubmit={onDiscover} className="flex gap-2">
         <input
           type="url"
           required
@@ -103,9 +104,11 @@ export default function AddSourceForm({ onAdded }: { onAdded: () => void }) {
         <button
           type="submit"
           disabled={busy}
-          className={`${btn} bg-accent text-bg hover:opacity-90`}
+          aria-label={busy ? 'Discovering' : 'Discover'}
+          title={busy ? 'Discovering' : 'Discover'}
+          className="inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-accent text-bg transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Discover
+          {busy ? <SpinnerIcon /> : <SearchIcon />}
         </button>
       </form>
 

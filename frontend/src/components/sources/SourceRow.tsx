@@ -1,15 +1,15 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import type { FocusEvent, KeyboardEvent } from 'react';
 import { ApiError, deleteSource, updateSource } from '@/lib/api';
-import { MAX_POSTS, MIN_POSTS } from '@/lib/settings';
+import SourceEditDialog from '@/components/sources/SourceEditDialog';
+import { PencilIcon, TrashIcon } from '@/components/sources/icons';
 import { formatPostTime } from '@/lib/time';
 import type { AdminSource } from '@/lib/types';
 
 const CONFIRM_MS = 5000;
 
-export const ROW_GRID = 'md:grid-cols-[minmax(0,2fr)_minmax(0,1.3fr)_auto_auto_auto]';
+export const ROW_GRID = 'md:grid-cols-[minmax(0,2fr)_minmax(0,1.3fr)_4rem_2.75rem_6rem]';
 
 export default function SourceRow({
   source,
@@ -22,17 +22,24 @@ export default function SourceRow({
   onChange: () => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(source.name);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
-  const settled = useRef(false);
+  const editButton = useRef<HTMLButtonElement>(null);
+  const returnFocus = useRef(false);
 
   useEffect(() => {
     if (!confirming) return;
     const t = setTimeout(() => setConfirming(false), CONFIRM_MS);
     return () => clearTimeout(t);
   }, [confirming]);
+
+  // The dialog closes by unmounting, so the browser does not restore focus by itself.
+  useEffect(() => {
+    if (editing || !returnFocus.current) return;
+    returnFocus.current = false;
+    editButton.current?.focus();
+  }, [editing]);
 
   async function run(fn: () => Promise<unknown>) {
     setBusy(true);
@@ -47,44 +54,9 @@ export default function SourceRow({
     }
   }
 
-  function startEdit() {
-    settled.current = false;
-    setDraft(source.name);
-    setEditing(true);
-  }
-
-  function commit() {
-    if (settled.current) return;
-    settled.current = true;
+  function closeDialog() {
+    returnFocus.current = true;
     setEditing(false);
-    const name = draft.trim();
-    if (!name || name === source.name) return;
-    void run(() => updateSource(source.sourceId, { name }));
-  }
-
-  function cancel() {
-    settled.current = true;
-    setEditing(false);
-  }
-
-  function onKey(e: KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'Enter') commit();
-    else if (e.key === 'Escape') cancel();
-  }
-
-  // Blank clears the override; the input is uncontrolled and re-keyed when the saved value changes.
-  function commitPosts(e: FocusEvent<HTMLInputElement> | KeyboardEvent<HTMLInputElement>) {
-    const input = e.currentTarget;
-    const current = source.postsPerSource ?? null;
-    const raw = input.value.trim();
-    const next = raw === '' ? null : Number(raw);
-    if (next !== null && !(Number.isInteger(next) && next >= MIN_POSTS && next <= MAX_POSTS)) {
-      setError(`Posts must be a whole number from ${MIN_POSTS} to ${MAX_POSTS}.`);
-      input.value = current === null ? '' : String(current);
-      return;
-    }
-    if (next === current) return;
-    void run(() => updateSource(source.sourceId, { postsPerSource: next }));
   }
 
   const failed = source.lastStatus === 'error';
@@ -95,27 +67,14 @@ export default function SourceRow({
       className={`rounded-xl border border-border bg-surface p-3 md:grid ${ROW_GRID} md:items-center md:gap-4 md:rounded-none md:border-0 md:border-b md:bg-transparent md:px-2`}
     >
       <div className="min-w-0">
-        {editing ? (
-          <input
-            autoFocus
-            aria-label="Source name"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={onKey}
-            onBlur={commit}
-            className="min-h-11 w-full rounded-lg border border-accent bg-bg px-2 text-sm font-semibold"
-          />
-        ) : (
-          <button
-            type="button"
-            onClick={startEdit}
-            aria-label={`Rename ${source.name}`}
-            title="Click to rename"
-            className="block min-h-11 max-w-full cursor-text truncate rounded-lg px-2 text-left text-sm font-semibold hover:bg-bg"
-          >
-            {source.name}
-          </button>
-        )}
+        <div className="flex min-h-11 min-w-0 items-center gap-2 px-2">
+          <span className="truncate text-sm font-semibold">{source.name}</span>
+          {source.shortName && (
+            <span className="max-w-[45%] shrink-0 truncate rounded-md border border-accent/30 bg-accent/10 px-1.5 py-0.5 font-mono text-xs text-accent">
+              {source.shortName}
+            </span>
+          )}
+        </div>
         <a
           href={source.feedUrl}
           target="_blank"
@@ -149,30 +108,19 @@ export default function SourceRow({
       </div>
 
       <div className="mt-2 flex items-center justify-between gap-3 md:mt-0 md:contents">
-        <label className="flex items-center gap-2 font-mono text-xs text-muted">
+        <p className="flex items-center gap-2 font-mono text-xs text-muted md:w-16 md:justify-center">
           <span className="md:sr-only">Posts</span>
-          <input
-            key={source.postsPerSource ?? 'default'}
-            type="number"
-            inputMode="numeric"
-            min={MIN_POSTS}
-            max={MAX_POSTS}
-            defaultValue={source.postsPerSource ?? ''}
-            placeholder={defaultPosts !== undefined ? String(defaultPosts) : ''}
-            aria-label={`Posts per crawl for ${source.name}`}
+          <span
             title={
               source.postsPerSource !== undefined
-                ? 'Override for this source — clear to use the default'
-                : `Uses the default${defaultPosts !== undefined ? ` (${defaultPosts})` : ''}`
+                ? 'Set for this source'
+                : 'Uses the default from crawl settings'
             }
-            disabled={busy}
-            onBlur={commitPosts}
-            onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-            className={`min-h-11 w-16 rounded-lg border bg-bg px-2 text-center text-sm placeholder:text-muted/60 disabled:opacity-50 ${
-              source.postsPerSource !== undefined ? 'border-accent text-accent' : 'border-border'
-            }`}
-          />
-        </label>
+            className={source.postsPerSource !== undefined ? 'text-sm text-accent' : 'text-sm'}
+          >
+            {source.postsPerSource ?? defaultPosts ?? '–'}
+          </span>
+        </p>
         <button
           type="button"
           role="switch"
@@ -198,25 +146,55 @@ export default function SourceRow({
           </span>
         </button>
 
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => {
-            if (!confirming) setConfirming(true);
-            else {
-              setConfirming(false);
-              void run(() => deleteSource(source.sourceId));
-            }
-          }}
-          className={`min-h-11 cursor-pointer rounded-lg border px-3 text-sm font-medium transition-colors disabled:opacity-50 ${
-            confirming
-              ? 'border-red-500 bg-red-500/10 text-red-500'
-              : 'border-border text-muted hover:border-red-500 hover:text-red-500'
-          }`}
-        >
-          {confirming ? 'Confirm delete?' : 'Delete'}
-        </button>
+        <div className="flex items-center justify-end gap-2 md:w-24">
+          <button
+            ref={editButton}
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setError(undefined);
+              setEditing(true);
+            }}
+            aria-label={`Edit ${source.name}`}
+            title="Edit"
+            className="inline-flex size-11 cursor-pointer items-center justify-center rounded-lg border border-border text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+          >
+            <PencilIcon />
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              if (!confirming) setConfirming(true);
+              else {
+                setConfirming(false);
+                void run(() => deleteSource(source.sourceId));
+              }
+            }}
+            aria-label={`${confirming ? 'Confirm delete' : 'Delete'} ${source.name}`}
+            title={confirming ? 'Click again to delete' : 'Delete'}
+            className={`inline-flex size-11 cursor-pointer items-center justify-center rounded-lg border transition-colors disabled:opacity-50 ${
+              confirming
+                ? 'border-red-500 bg-red-500 text-white'
+                : 'border-border text-muted hover:border-red-500 hover:text-red-500'
+            }`}
+          >
+            <TrashIcon />
+          </button>
+        </div>
       </div>
+
+      {editing && (
+        <SourceEditDialog
+          source={source}
+          defaultPosts={defaultPosts}
+          onCancel={closeDialog}
+          onSaved={(changed) => {
+            closeDialog();
+            if (changed) onChange();
+          }}
+        />
+      )}
     </li>
   );
 }

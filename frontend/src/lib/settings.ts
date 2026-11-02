@@ -2,6 +2,10 @@
 export const MIN_POSTS = 1;
 export const MAX_POSTS = 50;
 
+// Mirrors backend/src/api/router.ts limits.
+export const MAX_NAME = 120;
+export const MAX_SHORT_NAME = 30;
+
 export const KEEP_FOREVER = 0;
 export const RETENTION_OPTIONS: { days: number; label: string }[] = [
   { days: 7, label: '1 week' },

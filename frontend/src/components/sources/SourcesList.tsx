@@ -25,9 +25,9 @@ export default function SourcesList({
       >
         <span>Source</span>
         <span>Last crawl</span>
-        <span className="w-16 text-center">Posts</span>
-        <span className="w-11">On</span>
-        <span className="w-[8.5rem]" />
+        <span className="text-center">Posts</span>
+        <span>On</span>
+        <span />
       </div>
       <ul className="space-y-3 md:space-y-0">
         {sources.map((s) => (
