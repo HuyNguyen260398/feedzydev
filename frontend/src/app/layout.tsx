@@ -21,7 +21,17 @@ export const metadata: Metadata = {
   applicationName: 'feedzydev',
   manifest: '/manifest.json',
   appleWebApp: { capable: true, title: 'feedzydev', statusBarStyle: 'black-translucent' },
-  icons: { icon: '/icon.svg', apple: '/icons/apple-touch-icon.png' },
+  // Raster icons alongside the SVG: home-screen shortcuts (Android shortcuts, iOS) cannot use SVG
+  // and otherwise fall back to a generated letter icon.
+  icons: {
+    icon: [
+      { url: '/icon.svg', type: 'image/svg+xml' },
+      { url: '/icons/icon-192.png', type: 'image/png', sizes: '192x192' },
+      { url: '/icons/icon-512.png', type: 'image/png', sizes: '512x512' },
+    ],
+    shortcut: '/favicon.ico',
+    apple: [{ url: '/apple-touch-icon.png', sizes: '180x180', type: 'image/png' }],
+  },
   formatDetection: { telephone: false },
 };
 
